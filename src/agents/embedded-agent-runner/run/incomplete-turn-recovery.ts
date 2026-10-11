@@ -58,7 +58,6 @@ export function shouldRetrySilentErrorAssistantTurn(params: {
     | "clientToolCalls"
     | "yieldDetected"
     | "didSendDeterministicApprovalPrompt"
-    | "heartbeatToolResponse"
     | "lastToolError"
     | "toolMediaUrls"
     | "toolAudioAsVoice"

@@ -52,6 +52,11 @@ import {
 } from "./run.test-harness.js";
 
 const runCronIsolatedAgentTurn = await loadRunCronIsolatedAgentTurn();
+// Transform the real lazy execution modules before starting the scheduler's watchdog.
+await Promise.all([
+  import("./run-executor.runtime.js"),
+  import("../../agents/acp-workspace-provisioning.js"),
+]);
 const session = await vi.importActual<typeof import("./session.js")>("./session.js");
 const accessor = await vi.importActual<typeof import("../../config/sessions/session-accessor.js")>(
   "../../config/sessions/session-accessor.js",
@@ -243,7 +248,15 @@ describe("scheduled workspace authority through creator, storage, scheduler and 
       defaultAgentId: "main",
       log: createNoopLogger(),
       enqueueSystemEvent: vi.fn(),
-      requestHeartbeat: vi.fn(),
+      runSessionEvent: (request) =>
+        runCronIsolatedAgentTurn({
+          ...request,
+          cfg: config,
+          deps: {},
+          agentId: "main",
+          message: request.text,
+          sessionKey: targetKey,
+        }),
       runIsolatedAgentJob: (request) =>
         runCronIsolatedAgentTurn({
           ...request,

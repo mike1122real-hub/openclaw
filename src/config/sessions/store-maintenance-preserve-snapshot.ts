@@ -1,10 +1,24 @@
-import { SqliteSessionMutationConflictError } from "./session-mutation-conflict-error.js";
+import {
+  MaintenancePreservationRequiredError,
+  SqliteSessionMutationConflictError,
+} from "./session-mutation-conflict-error.js";
 import { normalizeStoreSessionKey } from "./store-entry.js";
 import type {
   SessionMaintenancePreservationPlan,
   SessionMaintenancePreservationSnapshot,
 } from "./store-maintenance-preserve-snapshot.types.js";
 import type { SessionEntry } from "./types.js";
+
+export function readSessionMaintenancePreservation(
+  snapshot: SessionMaintenancePreservationSnapshot | null,
+): SessionMaintenancePreservationSnapshot {
+  if (snapshot === null) {
+    throw new MaintenancePreservationRequiredError(
+      "SQLite maintenance requires session preservation",
+    );
+  }
+  return snapshot;
+}
 
 export function addSessionMaintenancePreserveKeys(
   keys: Set<string>,

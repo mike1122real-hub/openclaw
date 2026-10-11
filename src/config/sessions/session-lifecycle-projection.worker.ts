@@ -29,95 +29,108 @@ import type {
   SessionLifecycleProjectionCommit,
   SessionLifecycleProjectionCommitted,
 } from "./session-lifecycle-projection.types.js";
+import { MaintenancePreservationRequiredError } from "./session-mutation-conflict-error.js";
 import type { SessionEntry } from "./types.js";
 
 export function commitSessionLifecycleProjection(
   input: SessionLifecycleProjectionCommit,
-  { writeTransaction, admit, options }: AgentWorkerOperationContext,
+  { writeTransaction, admit, options, open }: AgentWorkerOperationContext,
 ) {
-  return writeTransaction("session.lifecycle.project", "Session lifecycle", (database) => {
-    const progressCardResetKeys: string[] = [];
-    const projectionReconcileSessionIds: string[] = [];
-    const postimages: SessionEntryWritePostimages = new Map();
-    const archivedPrevious = new Map<string, SessionEntry>();
-    const upsert = input.projected.upsertedEntries[0];
-    // Compound lifecycle changes keep their ordinary cold-read fallback.
-    const publishActorEntry =
-      input.projected.upsertedEntries.length === 1 &&
-      input.projected.removals.length === 0 &&
-      upsert &&
-      !upsert.resetBoundary
-        ? prepareSessionActorEntryPatch(database, upsert.sessionKey)
-        : undefined;
-    const result = commitPreparedSessionEntryLifecycleMutationInDatabase(
-      database,
-      input,
-      input.removalPlans,
-      {
-        resetScope: { agentId: input.agentId, path: database.path, env: options.env },
-        currentEntrySnapshot: publishActorEntry?.snapshot(),
-        postimages,
-        onArchived: (sessionKey, previous) => archivedPrevious.set(sessionKey, previous),
-        onResetBoundary: ({
-          sessionKey,
-          sessionId,
-          progressCardReset,
-          projectionNeedsReconcile,
-        }) => {
-          if (progressCardReset) {
-            progressCardResetKeys.push(sessionKey);
-          }
-          if (projectionNeedsReconcile) {
-            projectionReconcileSessionIds.push(sessionId);
-          }
-        },
-      },
-    );
-    const identity = collectLifecycleIdentityChanges(input.projected, result.removedSessionKeys);
-    for (const [sessionKey, previous] of archivedPrevious) {
-      if (!identity.previous.has(sessionKey)) {
-        identity.previous.set(sessionKey, previous);
-      }
-    }
-    for (const sessionKey of identity.current.keys()) {
-      if (!postimages.has(sessionKey)) {
-        identity.current.delete(sessionKey);
-      }
-    }
-    for (const [sessionKey, postimage] of postimages) {
-      identity.current.set(sessionKey, postimage.entry);
-    }
-    const candidate: SessionLifecycleProjectionCommitted = {
-      kind: "session-lifecycle-projection",
-      result,
-      progressCardResetKeys,
-      projectionReconcileSessionIds,
-      publication: prepareSessionEntryReplacementPublication(
-        {
-          ...identity,
-          pendingArchiveRecovery: result.pendingArchives,
-          membershipInvalidatedKeys: [
-            ...result.removedSessionKeys,
-            ...input.projected.upsertedEntries.flatMap(({ sessionKey, entry, expectedEntry }) =>
-              entry.sessionId !== expectedEntry?.sessionId ? [sessionKey] : [],
-            ),
-          ],
-          maintenancePlans: result.maintenancePlans,
-        },
+  try {
+    return writeTransaction("session.lifecycle.project", "Session lifecycle", (database) => {
+      const progressCardResetKeys: string[] = [];
+      const projectionReconcileSessionIds: string[] = [];
+      const postimages: SessionEntryWritePostimages = new Map();
+      const archivedPrevious = new Map<string, SessionEntry>();
+      const upsert = input.projected.upsertedEntries[0];
+      // Compound lifecycle changes keep their ordinary cold-read fallback.
+      const publishActorEntry =
+        input.projected.upsertedEntries.length === 1 &&
+        input.projected.removals.length === 0 &&
+        upsert &&
+        !upsert.resetBoundary
+          ? prepareSessionActorEntryPatch(database, upsert.sessionKey)
+          : undefined;
+      const result = commitPreparedSessionEntryLifecycleMutationInDatabase(
         database,
-        { postimages },
-      ),
-    };
-    if (
-      result.maintenancePlans.every(
-        (plan) => plan.archivedEntries.length === 0 && plan.entryRemovals.length === 0,
-      )
-    ) {
-      publishActorEntry?.publish(postimages, candidate.publication);
+        input,
+        input.removalPlans,
+        {
+          resetScope: { agentId: input.agentId, path: database.path, env: options.env },
+          currentEntrySnapshot: publishActorEntry?.snapshot(),
+          postimages,
+          onArchived: (sessionKey, previous) => archivedPrevious.set(sessionKey, previous),
+          onResetBoundary: ({
+            sessionKey,
+            sessionId,
+            progressCardReset,
+            projectionNeedsReconcile,
+          }) => {
+            if (progressCardReset) {
+              progressCardResetKeys.push(sessionKey);
+            }
+            if (projectionNeedsReconcile) {
+              projectionReconcileSessionIds.push(sessionId);
+            }
+          },
+        },
+      );
+      const identity = collectLifecycleIdentityChanges(input.projected, result.removedSessionKeys);
+      for (const [sessionKey, previous] of archivedPrevious) {
+        if (!identity.previous.has(sessionKey)) {
+          identity.previous.set(sessionKey, previous);
+        }
+      }
+      for (const sessionKey of identity.current.keys()) {
+        if (!postimages.has(sessionKey)) {
+          identity.current.delete(sessionKey);
+        }
+      }
+      for (const [sessionKey, postimage] of postimages) {
+        identity.current.set(sessionKey, postimage.entry);
+      }
+      const candidate: SessionLifecycleProjectionCommitted = {
+        kind: "session-lifecycle-projection",
+        result,
+        progressCardResetKeys,
+        projectionReconcileSessionIds,
+        publication: prepareSessionEntryReplacementPublication(
+          {
+            ...identity,
+            pendingArchiveRecovery: result.pendingArchives,
+            membershipInvalidatedKeys: [
+              ...result.removedSessionKeys,
+              ...input.projected.upsertedEntries.flatMap(({ sessionKey, entry, expectedEntry }) =>
+                entry.sessionId !== expectedEntry?.sessionId ? [sessionKey] : [],
+              ),
+            ],
+            maintenancePlans: result.maintenancePlans,
+          },
+          database,
+          { postimages },
+        ),
+      };
+      if (
+        result.maintenancePlans.every(
+          (plan) => plan.archivedEntries.length === 0 && plan.entryRemovals.length === 0,
+        )
+      ) {
+        publishActorEntry?.publish(postimages, candidate.publication);
+      }
+      const receipt = transferSessionEntryWorkerCandidate(database, admit, candidate);
+      return receipt;
+    });
+  } catch (error) {
+    if (!(error instanceof MaintenancePreservationRequiredError)) {
+      throw error;
     }
-    const receipt = transferSessionEntryWorkerCandidate(database, admit, candidate);
-    return receipt;
-  });
+    const database = open();
+    assertTransactionUsable(database.db);
+    if (database.db.isTransaction) {
+      throw error;
+    }
+    return { kind: "maintenance-preservation-required" } as const;
+  }
 }
 
 type LifecycleProjectionPreparation = {

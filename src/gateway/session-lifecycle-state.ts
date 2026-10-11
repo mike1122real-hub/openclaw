@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { normalizeOptionalString as normalizeLifecycleRunId } from "@openclaw/normalization-core/string-coerce";
 import { isAgentLifecycleYieldedWaiting } from "../agents/agent-lifecycle-parent-state.js";
@@ -7,10 +8,12 @@ import {
   type AgentRunTerminalOutcome,
 } from "../agents/agent-run-terminal-outcome.js";
 import { projectMainSessionRecoveryLifecycle } from "../agents/main-session-recovery/main-session-recovery-lifecycle.js";
+import { transitionMainSessionRecovery } from "../agents/main-session-recovery/main-session-recovery-state.js";
 import { getRuntimeConfig } from "../config/io.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
 import { buildUpdatedSessionGoalStatus } from "../config/sessions/goals-transitions.js";
 import {
+  hasRestartRecoveryTerminalRun,
   isMainRestartRecoveryCandidate,
   recordLifecycleFence,
 } from "../config/sessions/restart-recovery-state.js";
@@ -40,7 +43,6 @@ type LifecyclePhase = "start" | "end" | "error";
 
 type LifecycleEventLike = Pick<AgentEventPayload, "ts" | "sessionId"> & {
   controlUiVisible?: boolean;
-  isHeartbeat?: boolean;
   contextClaimId?: string;
   runId?: string;
   clientRunId?: string;
@@ -212,7 +214,6 @@ export function deriveGatewaySessionLifecycleSnapshot(params: {
     ...(terminal &&
     !interruptedForRestart &&
     params.event.controlUiVisible === true &&
-    params.event.isHeartbeat !== true &&
     endedAt !== undefined
       ? { lastActivityAt: Math.max(existing?.lastActivityAt ?? 0, endedAt) }
       : {}),
@@ -493,6 +494,20 @@ async function persistPreparedGatewaySessionLifecycleEvent(
           lifecycleGeneration:
             params.event.lifecycleGeneration ?? getAgentEventLifecycleGeneration(),
         });
+        if (
+          patch.status === "interrupted" &&
+          params.event.lifecycleGeneration === getAgentEventLifecycleGeneration() &&
+          !hasRestartRecoveryTerminalRun(entry, eventRunId)
+        ) {
+          // The terminal owner can retire before the bulk shutdown scan reaches this row.
+          const marked = { ...entry };
+          transitionMainSessionRecovery(marked, {
+            kind: "mark_interrupted",
+            cycleId: randomUUID(),
+            now: patch.updatedAt ?? params.event.ts,
+          });
+          Object.assign(patch, { ...marked, ...patch });
+        }
       }
       if (providerReview && Object.keys(patch).length > 0) {
         patch.providerReview = providerReview.review;

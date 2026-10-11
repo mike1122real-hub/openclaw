@@ -1,6 +1,10 @@
 import { getSqliteWorkerStateContext } from "../../infra/sqlite-worker-state-context.js";
 import type { OpenClawStateDatabase } from "../../state/openclaw-state-db-contract.js";
 import { runOpenClawStateWriteTransaction } from "../../state/openclaw-state-db.js";
+import {
+  CRON_ADMISSION_DEFERRED_RECEIPT_ERROR,
+  isDeferredCronAdmission,
+} from "../service/admission-deferred.js";
 import { recomputeSingleJobForMaintenance } from "../service/jobs-scheduling.js";
 import type { CronJobPolicyContext } from "../service/state.js";
 import { applyOutcomeToAuthoritativeJob } from "../service/timer-outcomes.js";
@@ -82,6 +86,29 @@ export function finalizeCronRunsInWorker(
               currentJob.state.runningReceiptId === receipt.receiptId;
             const job =
               currentJob && ownsRunningMarker ? currentJob : structuredClone(completed.job);
+            if (isDeferredCronAdmission(completed.job, completed)) {
+              if (currentJob && ownsRunningMarker) {
+                delete currentJob.state.queuedAtMs;
+                delete currentJob.state.runningAtMs;
+                delete currentJob.state.runningReceiptId;
+                delete currentJob.state.runningScheduleChangeId;
+                outcome.upsertedJobs.push(currentJob);
+              }
+              if (receipt) {
+                finishCronRunReceiptInDatabase({
+                  database: db,
+                  receiptSchema,
+                  handle: receipt,
+                  status: "skipped",
+                  finishedAtMs: completed.endedAt,
+                  error: CRON_ADMISSION_DEFERRED_RECEIPT_ERROR,
+                });
+              }
+              if (completed.request?.runId) {
+                outcome.eventPlans.push({ outcomeIndex, job });
+              }
+              continue;
+            }
             const shouldDelete = applyOutcomeToAuthoritativeJob(state, job, completed, {
               request: completed.request,
               deferredNotifications: currentJob && ownsRunningMarker ? outcome.notifications : [],

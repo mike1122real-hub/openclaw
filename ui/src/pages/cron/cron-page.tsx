@@ -47,6 +47,7 @@ export function CronPageContent(props: { controller: CronPageController; revisio
     const canManage = page.canManageCron;
     return {
       ...page.actions,
+      gateway: page.context.gateway,
       loading: page.cron.cronLoading,
       hasLoaded: page.cron.cronJobsSnapshotRevision !== null,
       listError: page.cron.cronJobsError,
@@ -74,7 +75,6 @@ export function CronPageContent(props: { controller: CronPageController; revisio
         page.modelSuggestionsError,
       busy: page.cron.cronBusy,
       form: page.cron.cronForm,
-      heartbeatScratch: canManage ? page.heartbeatScratch : "",
       channels: channels.channelsSnapshot?.channelMeta?.length
         ? channels.channelsSnapshot.channelMeta.map((entry) => entry.id)
         : (channels.channelsSnapshot?.channelOrder ?? []),

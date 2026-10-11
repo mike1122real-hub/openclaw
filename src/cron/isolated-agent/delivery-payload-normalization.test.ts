@@ -69,13 +69,13 @@ describe("cron canonical speech payload delivery", () => {
   });
 
   it.each([
-    { channel: "whatsapp", auto: "tagged" },
-    { channel: "telegram", auto: "always" },
-    { channel: "slack", auto: "tagged" },
+    { channel: "whatsapp", auto: "tagged", visibleText: "Your report is ready." },
+    { channel: "telegram", auto: "always", visibleText: "Your report is ready." },
+    { channel: "slack", auto: "tagged", visibleText: "Your report is ready." },
+    { channel: "telegram", auto: "tagged", visibleText: "" },
   ] as const)(
-    "preserves authored speech for $channel with $auto TTS",
-    async ({ channel, auto }) => {
-      const visibleText = "Your report is ready.";
+    "preserves authored speech for $channel with $auto TTS and visible text '$visibleText'",
+    async ({ channel, auto, visibleText }) => {
       const spokenText = "The report has finished successfully.";
       const payloads = buildPayloads({
         isCronTrigger: true,

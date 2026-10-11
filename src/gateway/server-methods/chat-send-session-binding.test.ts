@@ -602,7 +602,6 @@ it.each(
               opts: {
                 dashboardReadAdmission: initial.options.replyOptions?.dashboardReadAdmission,
               },
-              isHeartbeat: false,
             },
             executionRunId,
           );

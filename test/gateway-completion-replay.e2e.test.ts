@@ -186,7 +186,6 @@ function config(url: string): OpenClawConfig {
     messages: { groupChat: { visibleReplies: "message_tool" } },
     agents: {
       defaults: {
-        heartbeat: { every: "0m" },
         model: { primary: MODEL_REF },
         models: { [MODEL_REF]: { agentRuntime: { id: "openclaw" } } },
         skipBootstrap: true,
@@ -231,7 +230,7 @@ type ModelInput = {
   role?: string;
   name?: string;
   call_id?: string;
-  content?: unknown;
+  content?: string | Array<{ type?: string; text?: string }>;
   output?: unknown;
 };
 

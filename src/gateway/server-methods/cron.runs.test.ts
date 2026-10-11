@@ -18,6 +18,7 @@ import { prepareUserProfileCatalog } from "../../state/user-profile-list.js";
 import { ensureUserProfilesSchema } from "../../state/user-profiles-schema.js";
 import { createTestGatewayScheduler } from "../../test-utils/gateway-scheduler-clock.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { prepareGatewayRecipientProfile } from "../expected-profile.js";
 import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
 import * as sharingPreparation from "../session-sharing-preparation.js";
 import { roleClient, rolePolicyConfig } from "../session-sharing.test-utils.js";
@@ -61,6 +62,9 @@ async function withCronHistory(
     const owner = roleClient("none", "history-owner");
     const foreign = roleClient("none", "history-foreign");
     const viewer = roleClient("view", "history-viewer");
+    for (const client of [owner, foreign, viewer]) {
+      prepareGatewayRecipientProfile(client);
+    }
     const ownKey = "agent:main:history-own";
     const foreignKey = "agent:main:history-foreign";
     for (const [sessionKey, client] of [
@@ -89,7 +93,6 @@ async function withCronHistory(
       cronEnabled: false,
       log: createNoopLogger(),
       enqueueSystemEvent: vi.fn(),
-      requestHeartbeat: vi.fn(),
       runIsolatedAgentJob: vi.fn(),
     });
     try {

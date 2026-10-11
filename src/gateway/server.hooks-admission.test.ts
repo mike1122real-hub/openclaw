@@ -15,6 +15,7 @@ import { getReplyFromConfig } from "../auto-reply/reply/get-reply.js";
 import * as sessionEventHandoff from "../auto-reply/reply/session-event-handoff.js";
 import { getRuntimeConfig } from "../config/config.js";
 import { resolveMainSessionKeyFromConfig } from "../config/sessions/main-session.runtime.js";
+import type { CronLaneWaitCallback } from "../cron/isolated-agent/run.types.js";
 import { DEFAULT_WEBHOOK_MAX_BODY_BYTES } from "../infra/http-body.js";
 import { peekSystemEventEntries } from "../infra/system-events.js";
 import { withEnvAsync } from "../test-utils/env.js";
@@ -242,6 +243,20 @@ async function createBlockedHookTransform(moduleName: string): Promise<{
   };
 }
 
+function mockHookEventReply() {
+  gatewayReplyMock.mockImplementation((ctx, options, config) =>
+    getReplyFromConfig(ctx, options, withFullRuntimeReplyConfig(config ?? getRuntimeConfig())),
+  );
+  return hookModel.mockReset().mockImplementation(async (params) => {
+    assert(params.preparedRunAdmission, "expected ordinary reply admission");
+    await params.preparedRunAdmission.admit("gateway", params.runId);
+    params.onExecutionPhase?.({ phase: "model_call_started" });
+    await params.onExecutionStarted?.();
+    await params.onAgentEvent?.({ stream: "lifecycle", data: { phase: "start" } });
+    return { payloads: [{ text: "Hook event observed" }], meta: { durationMs: 1 } };
+  });
+}
+
 function withRevokedHook(
   mode: "disable" | "rotate",
   { signal }: Pick<TestContext, "signal">,
@@ -289,21 +304,7 @@ function withRevokedHook(
               return receipt;
             });
           // Admission, native session creation, and reload authority remain real.
-          gatewayReplyMock.mockImplementation((ctx, options, config) =>
-            getReplyFromConfig(
-              ctx,
-              options,
-              withFullRuntimeReplyConfig(config ?? getRuntimeConfig()),
-            ),
-          );
-          const model = hookModel.mockReset().mockImplementation(async (params) => {
-            assert(params.preparedRunAdmission, "expected ordinary reply admission");
-            await params.preparedRunAdmission.admit("gateway", params.runId);
-            params.onExecutionPhase?.({ phase: "model_call_started" });
-            await params.onExecutionStarted?.();
-            await params.onAgentEvent?.({ stream: "lifecycle", data: { phase: "start" } });
-            return { payloads: [{ text: "Hook event observed" }], meta: { durationMs: 1 } };
-          });
+          const model = mockHookEventReply();
           const waitForEvent = async (text: string) => {
             const receipt = receipts.get(text);
             assert(receipt, `expected admitted hook occurrence: ${text}`);
@@ -516,9 +517,9 @@ describe("gateway hook admission", () => {
       cronIsolatedRun.mockImplementationOnce(async (params: unknown) => {
         const callbacks = params as {
           onExecutionStarted?: () => void;
-          onLaneWait?: (info: { waiting: boolean }) => void;
+          onLaneWait?: CronLaneWaitCallback;
         };
-        callbacks.onLaneWait?.({ waiting: false });
+        callbacks.onLaneWait?.({ waiting: false, stage: "execution" });
         placementAdmissionPublished.resolve();
         await runtimePreparation.promise;
         runnerEntered = true;
@@ -565,11 +566,13 @@ describe("gateway hook admission", () => {
       const persistent = mode === "persistent";
       await withGatewayServer(async ({ port }) => {
         const runnerAdmission = createDeferred();
+        const runnerEntered = createDeferred();
         cronIsolatedRun.mockClear();
         cronIsolatedRun.mockImplementationOnce(async (params: unknown) => {
           if (persistent) {
             expect(params).toHaveProperty("job.sessionTarget", "session:hook:admission:shared");
           }
+          runnerEntered.resolve();
           await runnerAdmission.promise;
           (params as { onExecutionStarted?: () => void }).onExecutionStarted?.();
           return { status: "ok", summary: "done" };
@@ -589,61 +592,126 @@ describe("gateway hook admission", () => {
           );
 
         const firstResponse = request();
-        await waitForCronIsolatedRuns(1);
-        const duplicateResponse = request();
-        await waitForDuplicateRequest();
-        expect(cronIsolatedRun).toHaveBeenCalledTimes(1);
-        runnerAdmission.resolve();
+        let duplicateResponse: Promise<Response> | undefined;
+        try {
+          await awaitGateBeforeSettlement(
+            runnerEntered.promise,
+            firstResponse,
+            "Hook response settled before its runner entered admission",
+          );
+          duplicateResponse = request();
+          await waitForDuplicateRequest();
+          expect(cronIsolatedRun).toHaveBeenCalledTimes(1);
+          runnerAdmission.resolve();
 
-        const [first, duplicate] = await Promise.all([firstResponse, duplicateResponse]);
-        expect(first.status).toBe(200);
-        expect(duplicate.status).toBe(200);
-        const firstBody = (await first.json()) as { runId?: string };
-        const duplicateBody = (await duplicate.json()) as { runId?: string };
-        expect(duplicateBody.runId).toBe(firstBody.runId);
+          const [first, duplicate] = await Promise.all([firstResponse, duplicateResponse]);
+          expect(first.status).toBe(200);
+          expect(duplicate.status).toBe(200);
+          const firstBody = (await first.json()) as { runId?: string };
+          const duplicateBody = (await duplicate.json()) as { runId?: string };
+          expect(duplicateBody.runId).toBe(firstBody.runId);
+        } finally {
+          runnerAdmission.resolve();
+          await Promise.allSettled([firstResponse, duplicateResponse]);
+        }
       });
     },
   );
 
-  test("returns typed admission failures and leaves the idempotency key retryable", async () => {
+  test("returns typed admission failures and leaves the idempotency key retryable", async ({
+    signal,
+  }) => {
     testState.hooksConfig = { enabled: true, token: HOOK_TOKEN };
-    await withGatewayServer(async ({ port }) => {
-      cronIsolatedRun.mockClear();
-      cronIsolatedRun
-        .mockResolvedValueOnce({
-          status: "error",
-          error: "session changed",
-          admissionDisposition: "session-conflict",
-        })
-        .mockResolvedValueOnce({
-          status: "error",
-          error: "provider preparation failed",
-          admissionDisposition: "rejected",
-        })
-        .mockImplementationOnce(async (params: unknown) => {
-          (params as { onExecutionStarted?: () => void }).onExecutionStarted?.();
-          return { status: "ok", summary: "done" };
+    await writeReloadableHooksConfig({ enabled: true, token: HOOK_TOKEN });
+    await fixtureLifetime.run(() =>
+      withEnvAsync({ OPENCLAW_TEST_MINIMAL_GATEWAY: "0" }, async () => {
+        await withGatewayServer(async ({ port, server }) => {
+          await withinTest(server.startupSettled, signal);
+          const model = mockHookEventReply();
+          const receipts = new Set<
+            ReturnType<typeof sessionEventHandoff.enqueueSessionEventForHost>
+          >();
+          const firstNotice =
+            createDeferred<ReturnType<typeof sessionEventHandoff.enqueueSessionEventForHost>>();
+          const enqueue = sessionEventHandoff.enqueueSessionEventForHost;
+          const eventObserver = vi
+            .spyOn(sessionEventHandoff, "enqueueSessionEventForHost")
+            .mockImplementation((text, options) => {
+              const receipt = enqueue(text, options);
+              if (options.source === "hook") {
+                receipts.add(receipt);
+                firstNotice.resolve(receipt);
+              }
+              return receipt;
+            });
+          cronIsolatedRun.mockClear();
+          cronIsolatedRun
+            .mockResolvedValueOnce({
+              status: "error",
+              error: "session changed",
+              admissionDisposition: "session-conflict",
+            })
+            .mockResolvedValueOnce({
+              status: "error",
+              error: "provider preparation failed",
+              admissionDisposition: "rejected",
+            })
+            .mockImplementationOnce(async (params: unknown) => {
+              (params as { onExecutionStarted?: () => void }).onExecutionStarted?.();
+              return { status: "ok", summary: "done" };
+            });
+          const request = () =>
+            postHook(port, "/hooks/agent", { message: "Dispatch" }, "admission-retry");
+          const responseContext = async (response: Response) =>
+            JSON.stringify({
+              body: await response.clone().text(),
+              runnerCalls: cronIsolatedRun.mock.calls.length,
+            });
+
+          try {
+            const conflict = await request();
+            expect(conflict.status, await responseContext(conflict)).toBe(409);
+            const conflictBody = (await conflict.json()) as { ok?: boolean; runId?: string };
+            expect(conflictBody.ok).toBe(false);
+
+            const notice = await withinTest(firstNotice.promise, signal);
+            await expect(
+              withinTest(notice.accepted, signal),
+              "first hook failure notice acceptance",
+            ).resolves.toEqual({ ok: true });
+            await expect(
+              withinTest(notice.settled, signal),
+              "first hook failure notice settlement",
+            ).resolves.toMatchObject({
+              status: "completed",
+              executionStarted: true,
+            });
+
+            const gatewayFailure = await request();
+            expect(gatewayFailure.status, await responseContext(gatewayFailure)).toBe(502);
+            const gatewayFailureBody = (await gatewayFailure.json()) as {
+              ok?: boolean;
+              runId?: string;
+            };
+            expect(gatewayFailureBody.ok).toBe(false);
+            expect(gatewayFailureBody.runId).not.toBe(conflictBody.runId);
+
+            const admitted = await request();
+            expect(admitted.status, await responseContext(admitted)).toBe(200);
+            expect(cronIsolatedRun).toHaveBeenCalledTimes(3);
+          } finally {
+            await fixtureLifetime.verifyCleanup(async () => {
+              for (const receipt of receipts) {
+                receipt.cancel();
+              }
+              await Promise.allSettled([...receipts].map((receipt) => receipt.settled));
+            });
+            eventObserver.mockRestore();
+            model.mockReset();
+            gatewayReplyMock.mockReset();
+          }
         });
-      const request = () =>
-        postHook(port, "/hooks/agent", { message: "Dispatch" }, "admission-retry");
-
-      const conflict = await request();
-      expect(conflict.status).toBe(409);
-      const conflictBody = (await conflict.json()) as { ok?: boolean; runId?: string };
-      expect(conflictBody.ok).toBe(false);
-
-      const gatewayFailure = await request();
-      expect(gatewayFailure.status).toBe(502);
-      const gatewayFailureBody = (await gatewayFailure.json()) as {
-        ok?: boolean;
-        runId?: string;
-      };
-      expect(gatewayFailureBody.ok).toBe(false);
-      expect(gatewayFailureBody.runId).not.toBe(conflictBody.runId);
-
-      const admitted = await request();
-      expect(admitted.status, await admitted.clone().text()).toBe(200);
-      expect(cronIsolatedRun).toHaveBeenCalledTimes(3);
-    });
+      }),
+    );
   });
 });
