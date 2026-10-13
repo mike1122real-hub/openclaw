@@ -88,7 +88,7 @@ registrations or unpublished facts remain unknown until the transaction closes;
 schema readers retain their conservative snapshot validation. The next read
 outside the transaction can refresh those facts through the existing owner.
 
-Current shared state uses [schema 22](/reference/database-schemas/state-schema-history#state-schema-22),
+Current shared state uses [schema 23](/reference/database-schemas/state-schema-history#state-schema-23),
 which fences ordinary automation policies after Heartbeat retirement without adding
 tables. The agent schema remains 26. Deferred physical cleanup is recorded in the
 [state storage README](https://github.com/openclaw/openclaw/blob/main/src/state/README.md).
@@ -491,6 +491,7 @@ page that now holds the content.
 - <a id="creator-namespace-migration" />[Creator namespace migration](/reference/database-schemas/agent-schema-history#creator-namespace-migration)
 - <a id="participant-identity-migration" />[Participant identity migration](/reference/database-schemas/agent-schema-history#participant-identity-migration)
 - <a id="state-schema-history" />[State schema history](/reference/database-schemas/state-schema-history#state-schema-history)
+- <a id="state-schema-23" />[State schema 23](/reference/database-schemas/state-schema-history#state-schema-23)
 - <a id="state-schema-22" />[State schema 22](/reference/database-schemas/state-schema-history#state-schema-22)
 - <a id="state-schema-21" />[State schema 21](/reference/database-schemas/state-schema-history#state-schema-21)
 - <a id="state-schema-16" />[State schema 16](/reference/database-schemas/state-schema-history#state-schema-16)

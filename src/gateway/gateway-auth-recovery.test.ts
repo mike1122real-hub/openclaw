@@ -18,7 +18,10 @@ import {
   type OpenClawTestInstance,
 } from "../../test/helpers/openclaw-test-instance.js";
 import { runQaGatewayTestFixture } from "../../test/helpers/qa-gateway-test-lifetime.js";
-import { loadPersistedAuthProfileStore } from "../agents/auth-profiles/persisted.js";
+import {
+  loadPersistedAuthProfileStore,
+  loadPersistedSharedAuthProfileStore,
+} from "../agents/auth-profiles/persisted.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { buildMockOpenAiResponsesProvider } from "./test-openai-responses-model.js";
 
@@ -173,7 +176,7 @@ describe("Gateway profile failure recovery", () => {
                 providers: {
                   [provider.providerId]: {
                     ...provider.config,
-                    apiKey: undefined,
+                    apiKey: profileIds.auth,
                     request: { allowPrivateNetwork: true },
                   },
                 },
@@ -188,6 +191,7 @@ describe("Gateway profile failure recovery", () => {
               retry: { provider: { maxRetries: 1 } },
             });
             signal.throwIfAborted();
+            // Provider connection keys are shared; the rate profile stays agent-local.
             for (const agentId of ["rate", "auth"] as const) {
               await gateway.state.writeAuthProfiles(
                 {
@@ -200,7 +204,7 @@ describe("Gateway profile failure recovery", () => {
                     },
                   },
                 },
-                agentId,
+                agentId === "auth" ? "main" : agentId,
               );
               signal.throwIfAborted();
             }
@@ -266,9 +270,11 @@ describe("Gateway profile failure recovery", () => {
               expect(terminal.status).toBe("error");
               expect(requests[agentId]).toBeGreaterThan(0);
               expect(unexpectedCredential).toBe(false);
-              return loadPersistedAuthProfileStore(gateway.state.agentDir(agentId))?.usageStats?.[
-                profileIds[agentId]
-              ];
+              const store =
+                agentId === "auth"
+                  ? loadPersistedSharedAuthProfileStore(gateway.env)
+                  : loadPersistedAuthProfileStore(gateway.state.agentDir(agentId));
+              return store?.usageStats?.[profileIds[agentId]];
             };
             const rateStats = await failTurn("rate");
             signal.throwIfAborted();
@@ -282,19 +288,16 @@ describe("Gateway profile failure recovery", () => {
               authStats?.cooldownReason ?? authStats?.disabledReason,
             );
             proofStep = "replace-credential";
-            await gateway.state.writeAuthProfiles(
-              {
-                version: 1,
-                profiles: {
-                  [profileIds.auth]: {
-                    type: "api_key",
-                    provider: provider.providerId,
-                    key: credentials.recovered,
-                  },
-                },
-              },
-              "auth",
+            const saved = await activeClient.request<{ provider: string; profileId: string }>(
+              "models.authSetApiKey",
+              { provider: provider.providerId, apiKey: credentials.recovered, agentId: "auth" },
+              { timeoutMs: 30_000, signal },
             );
+            signal.throwIfAborted();
+            expect(saved).toMatchObject({
+              provider: provider.providerId,
+              profileId: profileIds.auth,
+            });
             signal.throwIfAborted();
             proofStep = "models.authRefresh";
             const refreshed = await activeClient.request<{ refreshed: boolean }>(

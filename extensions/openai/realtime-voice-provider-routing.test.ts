@@ -2,11 +2,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { clearRuntimeAuthProfileStoreSnapshots } from "openclaw/plugin-sdk/agent-runtime";
 import {
-  clearRuntimeAuthProfileStoreSnapshots,
-  saveAuthProfileStore,
-} from "openclaw/plugin-sdk/agent-runtime";
-import type { AuthProfileStore } from "openclaw/plugin-sdk/provider-auth";
+  updateAuthProfileStoreWithLock,
+  type AuthProfileStore,
+} from "openclaw/plugin-sdk/provider-auth";
 import { closeOpenClawAgentDatabasesForTest } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildOpenAIRealtimeVoiceProvider } from "./realtime-voice-provider.js";
@@ -57,6 +57,18 @@ vi.mock("openclaw/plugin-sdk/provider-auth", async (importOriginal) => {
   };
 });
 import { createOpenAIRealtimeTestSupport } from "./realtime-voice-test-support.js";
+
+async function writeAuthProfiles(store: AuthProfileStore, agentDir: string): Promise<void> {
+  const seeded = await updateAuthProfileStoreWithLock({
+    agentDir,
+    saveOptions: { filterExternalAuthProfiles: false, syncExternalCli: false },
+    updater: (current) => {
+      current.profiles = structuredClone(store.profiles);
+      return true;
+    },
+  });
+  expect(seeded).not.toBeNull();
+}
 
 const OPAQUE_REALTIME_MODEL = "gpt-live-test-canary";
 
@@ -295,10 +307,7 @@ describe("OpenAI realtime voice provider routing", () => {
       initialItems: [],
     };
     try {
-      saveAuthProfileStore(store, agentDir, {
-        filterExternalAuthProfiles: false,
-        syncExternalCli: false,
-      });
+      await writeAuthProfiles(store, agentDir);
       expect(internalApi.isBrowserSessionConfigured(request)).toBe(false);
       await expect(provider.createBrowserSession?.(request)).rejects.toThrow();
       expect(createBrowserSession).not.toHaveBeenCalled();
@@ -313,10 +322,7 @@ describe("OpenAI realtime voice provider routing", () => {
         refresh: "codex-refresh",
         expires: Date.now() + 3_600_000,
       };
-      saveAuthProfileStore(store, agentDir, {
-        filterExternalAuthProfiles: false,
-        syncExternalCli: false,
-      });
+      await writeAuthProfiles(store, agentDir);
       expect(internalApi.isBrowserSessionConfigured(request)).toBe(true);
       await provider.createBrowserSession?.(request);
       expect(createBrowserSession).toHaveBeenCalledWith(expect.any(Object), {
@@ -368,10 +374,7 @@ describe("OpenAI realtime voice provider routing", () => {
       initialItems: [],
     };
     try {
-      saveAuthProfileStore(store, agentDir, {
-        filterExternalAuthProfiles: false,
-        syncExternalCli: false,
-      });
+      await writeAuthProfiles(store, agentDir);
       expect(internalApi.isBrowserSessionConfigured(request)).toBe(true);
       await provider.createBrowserSession?.(request);
       expect(createBrowserSession).toHaveBeenLastCalledWith(expect.any(Object), {
@@ -398,10 +401,7 @@ describe("OpenAI realtime voice provider routing", () => {
         refresh: "codex-refresh",
         expires: Date.now() + 3_600_000,
       };
-      saveAuthProfileStore(store, agentDir, {
-        filterExternalAuthProfiles: false,
-        syncExternalCli: false,
-      });
+      await writeAuthProfiles(store, agentDir);
       const orderedRequest = {
         ...request,
         cfg: { auth: { order: { openai: ["openai:default", "openai:codex"] } } },
@@ -414,10 +414,7 @@ describe("OpenAI realtime voice provider routing", () => {
       });
 
       delete store.profiles["openai:codex"];
-      saveAuthProfileStore(store, agentDir, {
-        filterExternalAuthProfiles: false,
-        syncExternalCli: false,
-      });
+      await writeAuthProfiles(store, agentDir);
       await provider.createBrowserSession?.({
         ...request,
         providerConfig: { model: "gpt-live-1-codex", apiKey: "test-api-key-platform" },
