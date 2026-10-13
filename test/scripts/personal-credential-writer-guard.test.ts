@@ -700,6 +700,36 @@ it("permits fixed noncredential generic writer keys without granting a caller ex
   ).toEqual([]);
 });
 
+it.each([
+  { keyType: "`automation-default:${string}:${string}`", credentialAccess: false },
+  { keyType: "`${string}`", credentialAccess: true },
+  { keyType: "`${string}:suffix`", credentialAccess: true },
+  { keyType: "`authProfiles.${string}`", credentialAccess: true },
+  { keyType: "`authProfiles.store${string}`", credentialAccess: true },
+  { keyType: "` authProfiles.${string}`", credentialAccess: true },
+  { keyType: "`authProfiles.store ${string}`", credentialAccess: true },
+  { keyType: "string", credentialAccess: true },
+  {
+    keyType: "`automation-default:${string}:${string}` | `authProfiles.${string}`",
+    credentialAccess: true,
+  },
+])("checks the credential capability of a $keyType writer key", ({ keyType, credentialAccess }) => {
+  const violations = inspect({
+    "src/state/config-machine-state-write.ts": `export function updateConfigMachineStateInDatabase() {}`,
+    "src/new-writer.worker.ts": `
+      import { updateConfigMachineStateInDatabase } from './state/config-machine-state-write.js';
+      export function write(stateKey: ${keyType}) {
+        updateConfigMachineStateInDatabase(db, stateKey, () => ({}), 1);
+      }
+    `,
+  });
+  expect(violations).toEqual(
+    credentialAccess
+      ? [expect.stringContaining("unreviewed personal credential writer reference")]
+      : [],
+  );
+});
+
 it("requires host publication for auth-store commands, including literal aliases", () => {
   const source = `async function runPreparedAuthProfileStoreUpdate() {
     const type = 'authProfiles.update' as const;

@@ -29,7 +29,10 @@ function decodeDefaultProactiveJobReceipt(value: unknown): DefaultProactiveJobRe
   return result.data;
 }
 
-function defaultProactiveJobReceiptKey(storePath: string, agentId: string): string {
+function defaultProactiveJobReceiptKey(
+  storePath: string,
+  agentId: string,
+): `automation-default:${string}:${string}` {
   return `automation-default:${cronStoreKey(storePath)}:${normalizeAgentId(agentId)}`;
 }
 
