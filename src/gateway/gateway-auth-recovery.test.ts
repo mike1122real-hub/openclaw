@@ -59,7 +59,7 @@ describe("Gateway profile failure recovery", () => {
         auth: "qa-auth-profile-key",
         recovered: "qa-recovered-profile-key",
       };
-      const profileIds = { rate: "mock-openai:rate", auth: "mock-openai:auth" };
+      const profileIds = { rate: "mock-openai:rate", auth: "mock-openai:manual" };
       const requests = { rate: 0, auth: 0, recovered: 0 };
       let phase: keyof typeof requests = "rate";
       let unexpectedCredential = false;
@@ -176,7 +176,7 @@ describe("Gateway profile failure recovery", () => {
                 providers: {
                   [provider.providerId]: {
                     ...provider.config,
-                    apiKey: profileIds.auth,
+                    apiKey: undefined,
                     request: { allowPrivateNetwork: true },
                   },
                 },
@@ -191,11 +191,12 @@ describe("Gateway profile failure recovery", () => {
               retry: { provider: { maxRetries: 1 } },
             });
             signal.throwIfAborted();
-            // Provider connection keys are shared; the rate profile stays agent-local.
+            // Keep rate retries agent-local while the live writer owns the shared manual key.
             for (const agentId of ["rate", "auth"] as const) {
               await gateway.state.writeAuthProfiles(
                 {
                   version: 1,
+                  order: { [provider.providerId]: [profileIds[agentId]] },
                   profiles: {
                     [profileIds[agentId]]: {
                       type: "api_key",
