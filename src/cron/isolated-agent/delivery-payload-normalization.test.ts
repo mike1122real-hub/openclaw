@@ -109,7 +109,7 @@ describe("cron canonical speech payload delivery", () => {
       expect(synthesizeMock.mock.calls[0]?.[0].text).toBe(spokenText);
       expect(result).toEqual([
         expect.objectContaining({
-          text: visibleText,
+          text: visibleText || undefined,
           spokenText,
           mediaUrl: "/tmp/cron-speech-proof.ogg",
         }),
