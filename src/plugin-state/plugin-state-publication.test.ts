@@ -183,7 +183,8 @@ describe("plugin state committed facts", () => {
 
   it("expires cached namespace rows and reloads after an uncertain publication", async () => {
     await withOpenClawTestState({ label: "plugin-state-namespace-expiry" }, async ({ env }) => {
-      let now = Date.now();
+      // The worker uses real time; only the cache clock should expire this row.
+      let now = Date.UTC(2100, 0, 1);
       vi.spyOn(Date, "now").mockImplementation(() => now);
       const options = { namespace: "receipts", maxEntries: 10, env };
       const native = createPluginStateSyncKeyedStore("receipt-test", options);
