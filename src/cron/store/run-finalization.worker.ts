@@ -99,6 +99,7 @@ export function finalizeCronRunsInWorker(
                   database: db,
                   receiptSchema,
                   handle: receipt,
+                  pendingReceiptId,
                   status: "skipped",
                   finishedAtMs: completed.endedAt,
                   error: CRON_ADMISSION_DEFERRED_RECEIPT_ERROR,
