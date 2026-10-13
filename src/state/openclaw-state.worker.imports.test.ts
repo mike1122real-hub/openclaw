@@ -73,7 +73,9 @@ it.each([
         expect(existsSync(databasePath)).toBe(false);
         await backend[SQLITE_WORKER_PREPARE_COMMAND]?.(command.type);
         expect(runWithSqliteWorkerStateContext(context, () => backend.execute(command))).toEqual(
-          command.type === "pluginState.lookup" ? { ok: true, value: undefined } : undefined,
+          command.type === "pluginState.lookup"
+            ? { ok: true, value: undefined, readRows: [] }
+            : undefined,
         );
         if (command.type === "deviceAuth.prepare") {
           expect(
