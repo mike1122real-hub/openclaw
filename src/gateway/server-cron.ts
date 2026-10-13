@@ -34,10 +34,7 @@ import { racePromiseWithAbortSignal } from "../infra/abort-signal.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import type { GatewayScheduler } from "../infra/gateway-scheduler.js";
 import { emitLegacyHeartbeatCronOutcome } from "../infra/heartbeat-events.js";
-import {
-  publishHeartbeatSummarySnapshot,
-  readHeartbeatSummarySnapshot,
-} from "../infra/heartbeat-summary-snapshot.js";
+import { readHeartbeatSummarySnapshot } from "../infra/heartbeat-summary-snapshot.js";
 import { mergeSsrFPolicies } from "../infra/net/ssrf.js";
 import { listConfiguredMessageChannels } from "../infra/outbound/channel-selection.js";
 import { withSystemEventOwner } from "../infra/system-event-ownership.js";
@@ -366,7 +363,6 @@ export function buildGatewayCronService(params: {
       for (const job of jobs) {
         legacyMonitorJobs.set(job.id, job);
       }
-      publishHeartbeatSummarySnapshot(cfg, jobs);
     } catch (error) {
       cronLogger.warn({ error }, "Legacy heartbeat diagnostics could not read automation state");
     }
@@ -664,7 +660,6 @@ export function buildGatewayCronService(params: {
         } else if (jobSnapshot) {
           legacyMonitorJobs.set(evt.jobId, jobSnapshot);
         }
-        publishHeartbeatSummarySnapshot(getRuntimeConfig(), [...legacyMonitorJobs.values()]);
         if (evt.action === "finished") {
           emitLegacyHeartbeatCronOutcome(evt);
         }

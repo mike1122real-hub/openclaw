@@ -19,7 +19,11 @@ import {
 import { appendCronUnattendedRunPreamble, appendCronJobScratchPrompt } from "./run-prompt.js";
 import { isCronScratchEffectivelyEmpty } from "./scratch-contract.js";
 import { readCronScratchSnapshot } from "./scratch-read.js";
-import type { CronExecutionIdentityAdmission, CronSessionRunPreparation } from "./service/state.js";
+import type {
+  CronExecutionIdentityAdmission,
+  CronIdleAdmissionWait,
+  CronSessionRunPreparation,
+} from "./service/state.js";
 import { resolveCronJobsStorePathFromConfig } from "./store.js";
 import type {
   CronRunDeliveryResult,
@@ -32,7 +36,7 @@ import type {
 } from "./types.js";
 
 export async function runCronSessionTurn(params: {
-  waitForIdle?: import("./service/state.js").CronIdleAdmissionWait;
+  waitForIdle?: CronIdleAdmissionWait;
   admissionSource: NonNullable<AdmittedRunContext["admissionSource"]>;
   sessionPreparation?: CronSessionRunPreparation;
   deliveryAttemptFence: CronCompletionDeliveryFence | null;

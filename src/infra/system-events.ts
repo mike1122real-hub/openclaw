@@ -695,9 +695,3 @@ export function resolveSystemEventDeliveryContext(
 export function resetSystemEventsForTest() {
   clearSystemEventQueues(queues);
 }
-
-export function peekDeliverableSystemEventEntries(sessionKey: string): SystemEvent[] {
-  return peekSystemEventEntries(sessionKey).filter(
-    (event) => !isSystemEventTurnOwned(sessionKey, event),
-  );
-}

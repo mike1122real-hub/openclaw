@@ -21,7 +21,7 @@ export const TURN_MODEL_CHANNEL_REF = {
 } as const;
 const TURN_MODEL_SESSION_REF = { provider: "google", model: "session-model" } as const;
 const TURN_MODEL_PARENT_REF = { provider: "xai", model: "parent-model" } as const;
-export const TURN_MODEL_OVERRIDE_REF = { provider: "mistral", model: "turn-model" } as const;
+const TURN_MODEL_OVERRIDE_REF = { provider: "mistral", model: "turn-model" } as const;
 const TURN_MODEL_LOCKED_REF = { provider: "cohere", model: "locked-model" } as const;
 const TURN_MODEL_PERSISTED_CHANNEL_REF = {
   provider: "anthropic",

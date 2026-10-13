@@ -544,15 +544,6 @@ export function isReplyPayloadStatusNotice(
   return Boolean(payload.isCompactionNotice || payload.isFallbackNotice || payload.isStatusNotice);
 }
 
-/** Host-generated errors, warnings, status lines and run labels; never the model's answer. */
-export function isHostNoticePayload(payload: ReplyPayload): boolean {
-  return (
-    payload.isError === true ||
-    isReplyPayloadStatusNotice(payload) ||
-    getReplyPayloadMetadata(payload)?.hostNotice === true
-  );
-}
-
 /** Classifies terminal vs. supplemental reply lanes, not content, sendability, or authority. */
 export const isReplyPayloadTerminalContent = (payload: ReplyPayload): boolean => {
   const supplement = getReplyPayloadTtsSupplement(payload);

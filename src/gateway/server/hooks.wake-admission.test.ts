@@ -15,7 +15,6 @@ import {
   enqueueRequiredSystemEventEntry,
   enqueueAutomationSystemEvent,
   isSystemEventTurnOwned,
-  peekDeliverableSystemEventEntries,
   peekSystemEventEntries,
   peekSystemEvents,
 } from "../../infra/system-events.js";
@@ -325,7 +324,7 @@ describe("authenticated immediate hook wake admission", () => {
       );
       if (!accepted) {
         expect(peekSystemEventEntries(queueKey)).toEqual(original);
-        expect(peekDeliverableSystemEventEntries(queueKey)).toEqual(original);
+        expect(original.map((event) => isSystemEventTurnOwned(queueKey, event))).toEqual([false]);
       }
       expect(mocks.enqueue).toHaveBeenCalledOnce();
     },
@@ -353,7 +352,11 @@ describe("authenticated immediate hook wake admission", () => {
         expect(mocks.enqueue).toHaveBeenCalledOnce();
         expect(handoff.cancel).not.toHaveBeenCalled();
         expect(peekSystemEventEntries(sessionKey)).toHaveLength(1);
-        expect(peekDeliverableSystemEventEntries(sessionKey)).toEqual([]);
+        expect(
+          peekSystemEventEntries(sessionKey).map((event) =>
+            isSystemEventTurnOwned(sessionKey, event),
+          ),
+        ).toEqual([true]);
       } finally {
         handoff.acceptance.resolve(
           accepted ? { ok: true } : { ok: false, error: "admission refused" },

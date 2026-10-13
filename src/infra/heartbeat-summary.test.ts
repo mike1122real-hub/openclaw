@@ -1,33 +1,38 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { makeCronJob } from "../cron/delivery.test-helpers.js";
-import { publishHeartbeatSummarySnapshot } from "./heartbeat-summary-snapshot.js";
-import { resolveHeartbeatSummaryForAgent } from "./heartbeat-summary.js";
+import {
+  projectHeartbeatSummary,
+  readHeartbeatSummarySnapshot,
+} from "./heartbeat-summary-snapshot.js";
 
-describe("deprecated heartbeat summary publication", () => {
-  it("projects the primary job until its owner replaces or removes the snapshot", () => {
-    const cfg: OpenClawConfig = {};
+const receipts = vi.hoisted(() => ({
+  read: vi.fn<typeof import("../cron/proactive-job-receipt.js").readDefaultProactiveJobsAsync>(),
+}));
+vi.mock("../cron/proactive-job-receipt.js", () => ({
+  readDefaultProactiveJobsAsync: receipts.read,
+}));
+beforeEach(() => receipts.read.mockReset());
+
+describe("protocol v4 automation summary projection", () => {
+  it("projects canonical cadence and delivery while disabled or missing jobs stay disabled", () => {
     const primary = makeCronJob({
       agentId: "ops",
       schedule: { kind: "every", everyMs: 900_000 },
       delivery: { mode: "announce", target: "owner", directPolicy: "block" },
     });
-    const converted = makeCronJob({ agentId: "ops", id: "converted", enabled: false });
-    publishHeartbeatSummarySnapshot(cfg, [primary, converted]);
-    const summary = resolveHeartbeatSummaryForAgent(cfg, "OPS");
-    expect(summary).toMatchObject({ enabled: true, everyMs: 900_000, target: "owner" });
-    summary.deliveryPolicy!.target = "none";
-    expect(resolveHeartbeatSummaryForAgent(cfg, "ops").deliveryPolicy?.target).toBe("owner");
-    expect(resolveHeartbeatSummaryForAgent({}, "ops").enabled).toBe(false);
-
-    publishHeartbeatSummarySnapshot(cfg, [{ ...primary, enabled: false }]);
-    expect(resolveHeartbeatSummaryForAgent(cfg, "ops")).toMatchObject({
+    expect(projectHeartbeatSummary(primary)).toMatchObject({
+      enabled: true,
+      everyMs: 900_000,
+      target: "owner",
+      deliveryPolicy: { target: "owner", directPolicy: "block" },
+    });
+    expect(projectHeartbeatSummary({ ...primary, enabled: false })).toMatchObject({
       enabled: false,
       every: "disabled",
       everyMs: null,
     });
-    publishHeartbeatSummarySnapshot(cfg, []);
-    expect(resolveHeartbeatSummaryForAgent(cfg, "ops")).toMatchObject({
+    expect(projectHeartbeatSummary()).toMatchObject({
       enabled: false,
       prompt: "",
       target: "none",
@@ -76,15 +81,14 @@ describe("deprecated heartbeat summary publication", () => {
 
   it.each(ownershipCases)(
     "projects an omitted job owner without guessing: $label",
-    ({ cfg, sessionKey, expectedAgentId }) => {
+    async ({ cfg, sessionKey, expectedAgentId }) => {
       const job = makeCronJob({ sessionKey, delivery: { mode: "none" } });
-      publishHeartbeatSummarySnapshot(cfg, [job]);
+      receipts.read.mockResolvedValue([job]);
+      const snapshot = await readHeartbeatSummarySnapshot(cfg);
 
-      for (const agentId of ["main", "ops"]) {
-        expect(resolveHeartbeatSummaryForAgent(cfg, agentId).enabled).toBe(
-          agentId === expectedAgentId,
-        );
-      }
+      expect(snapshot.map(({ agentId }) => agentId)).toEqual(
+        expectedAgentId ? [expectedAgentId] : [],
+      );
       expect(job.agentId).toBeUndefined();
     },
   );

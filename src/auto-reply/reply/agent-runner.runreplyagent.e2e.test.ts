@@ -66,7 +66,6 @@ import { resolveActiveExplicitSteerSessionKey } from "./explicit-steer-routing.j
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import {
   enqueueFollowupRun,
-  kickFollowupDrainIfIdle,
   refreshQueuedFollowupSession,
   scheduleFollowupDrain,
   type FollowupRun,
@@ -75,7 +74,6 @@ import {
 import { clearFollowupQueueForTest } from "./queue.test-helpers.js";
 import {
   REPLY_OPERATION_RUN_STATE,
-  resolveReplyOperationAgentTurn,
   type ReplyOperationRunState,
 } from "./reply-operation-run-state.js";
 import {
@@ -315,7 +313,6 @@ vi.mock("../../gateway/mcp-app-channel-action.js", () => ({
 vi.mock("./queue.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./queue.js")>()),
   enqueueFollowupRun: vi.fn(),
-  kickFollowupDrainIfIdle: vi.fn(),
   parkSteerCandidate: parkedSteer.park,
   refreshQueuedFollowupSession: vi.fn(),
   scheduleFollowupDrain: vi.fn(),
@@ -362,7 +359,6 @@ beforeEach(() => {
   });
   vi.mocked(enqueueFollowupRun).mockReset().mockReturnValue(true);
   vi.mocked(refreshQueuedFollowupSession).mockReset();
-  vi.mocked(kickFollowupDrainIfIdle).mockReset();
   vi.mocked(scheduleFollowupDrain).mockReset();
   vi.stubEnv("OPENCLAW_TEST_FAST", "1");
 });
@@ -1550,7 +1546,7 @@ describe("runReplyAgent admission and terminal accounting", () => {
     await run();
 
     expect(runState.admission).toEqual({ status: "owned" });
-    expect(resolveReplyOperationAgentTurn(runState)).toBe("ok");
+    expect(runState.agentTurn).toBe("ok");
   });
 
   it("preserves the visible failure reply and records terminal failure", async () => {
@@ -1572,7 +1568,7 @@ describe("runReplyAgent admission and terminal accounting", () => {
     const payloads = Array.isArray(result) ? result : [result];
 
     expect(payloads.map((payload) => payload?.text)).toEqual(["Visible terminal failure."]);
-    expect(resolveReplyOperationAgentTurn(runState)).toBe("failed");
+    expect(runState.agentTurn).toBe("failed");
   });
 
   registerReplyAdmissionCases({
@@ -1744,7 +1740,7 @@ describe("runReplyAgent admission and terminal accounting", () => {
         opts: { [REPLY_OPERATION_RUN_STATE]: runState },
       });
       await expect(run()).rejects.toThrow("persist exploded");
-      expect(resolveReplyOperationAgentTurn(runState)).toBe("failed");
+      expect(runState.agentTurn).toBe("failed");
       expect(vi.mocked(scheduleFollowupDrain)).toHaveBeenCalledTimes(1);
     } finally {
       persistSpy.mockRestore();
@@ -1874,7 +1870,7 @@ describe("runReplyAgent admission and terminal accounting", () => {
       expect(reply?.text).not.toBe("NO_REPLY");
     }
     if (label !== "aborted answer") {
-      expect(resolveReplyOperationAgentTurn(runState)).toBe("failed");
+      expect(runState.agentTurn).toBe("failed");
     }
   });
 
@@ -1962,7 +1958,7 @@ describe("runReplyAgent admission and terminal accounting", () => {
           text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
           isError: true,
         });
-        expect(resolveReplyOperationAgentTurn(runState)).toBe("failed");
+        expect(runState.agentTurn).toBe("failed");
         expect(onBlockReply).toHaveBeenCalledWith(
           expect.objectContaining({ text: `internal ${lane}` }),
           expect.any(Object),
@@ -3374,7 +3370,7 @@ describe("runReplyAgent pending final delivery capture", () => {
     });
 
     await expect(run()).resolves.toEqual(expect.objectContaining({ text: "private hook reply" }));
-    expect(resolveReplyOperationAgentTurn(receipt)).toBe("ok");
+    expect(receipt.agentTurn).toBe("ok");
 
     expect(await readStoredMainSession(storePath)).toMatchObject({
       status: "done",

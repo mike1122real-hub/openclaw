@@ -18,7 +18,7 @@ import type {
   CronRunDeliveryResult,
   CronRunTelemetry,
 } from "../types.js";
-import type { CronServiceState } from "./state.js";
+import type { CronIdleAdmissionSource, CronIdleAdmissionWait, CronServiceState } from "./state.js";
 
 export const MAX_CRON_TIMER_DELAY_MS = 60_000;
 
@@ -81,8 +81,8 @@ export type IsolatedAgentSetupTimeoutResult = {
 };
 
 export type ExecuteJobCoreOptions = {
-  idleAdmission?: import("./state.js").CronIdleAdmissionSource;
-  waitForIdle?: import("./state.js").CronIdleAdmissionWait;
+  idleAdmission?: CronIdleAdmissionSource;
+  waitForIdle?: CronIdleAdmissionWait;
   deliveryAttemptFence?: CronCompletionDeliveryFence;
   activeJobMarker?: CronActiveJobMarker;
   onExecutionStarted?: (info?: CronAgentExecutionStarted) => void;

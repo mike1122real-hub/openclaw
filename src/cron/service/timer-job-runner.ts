@@ -29,7 +29,7 @@ import {
   cronAbortErrorClassification,
   isSetupTimeoutErrorText,
 } from "./execution-errors.js";
-import type { CronServiceState } from "./state.js";
+import type { CronIdleAdmissionSource, CronServiceState } from "./state.js";
 import { resolveCronJobTimeoutMs } from "./timeout-policy.js";
 import type { CronJobRunResult, ExecuteJobCoreOptions } from "./timer-execution-timeout.js";
 import { executeJobCore } from "./timer-execution.js";
@@ -44,7 +44,7 @@ import { resolveDeliveryState } from "./timer-trigger.js";
 
 type CronRunTimeout = { timeoutMs: number; reason: string };
 type CronCoreRunOptions = {
-  idleAdmission?: import("./state.js").CronIdleAdmissionSource;
+  idleAdmission?: CronIdleAdmissionSource;
   runId?: string;
   activeJobMarker?: CronActiveJobMarker;
   streamBatch?: string;

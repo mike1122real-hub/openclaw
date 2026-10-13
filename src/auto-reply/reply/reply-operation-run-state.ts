@@ -2,7 +2,6 @@ import type { MessagingToolSend } from "../../agents/embedded-agent-messaging.ty
 import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
 import type { ReplyCompletion } from "../../agents/reply-completion.js";
 import { resolveAgentTurnExecutionStatus } from "./agent-runner-execution-status.js";
-import { isReplyOperationSuperseded } from "./reply-operation-abort.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import type { SessionEventExecution } from "./session-event-contract.js";
 
@@ -114,8 +113,4 @@ export function recordReplyPreRunRejection(
   if (state && rejection) {
     state.preRunRejection ??= rejection;
   }
-}
-
-export function resolveReplyOperationAgentTurn(state: ReplyOperationRunState | undefined) {
-  return isReplyOperationSuperseded(state?.agentTurnOwner) ? "superseded" : state?.agentTurn;
 }

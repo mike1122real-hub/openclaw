@@ -110,7 +110,7 @@ function isLegacyBracketToolResultPayload(value: string): boolean {
   );
 }
 
-export function stripLegacyBracketToolCallBlocks(text: string): string {
+function stripLegacyBracketToolCallBlocks(text: string): string {
   if (!text || !LEGACY_BRACKET_TOOL_BLOCK_QUICK_RE.test(text)) {
     return text;
   }

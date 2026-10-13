@@ -4,7 +4,6 @@ import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS } from "../auto-reply/heartbeat.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { tryResolveCronJobEffectiveAgentId } from "../cron/agent-id.js";
 import type { CronJob } from "../cron/types.js";
-import { normalizeAgentId } from "../routing/session-key.js";
 import type { ProactiveDeliveryPolicy } from "./outbound/targets.js";
 
 export type HeartbeatSummary = {
@@ -19,8 +18,6 @@ export type HeartbeatSummary = {
   deliveryPolicy?: ProactiveDeliveryPolicy;
 };
 
-const publishedSummaries = new WeakMap<OpenClawConfig, ReadonlyMap<string, HeartbeatSummary>>();
-
 function resolveHeartbeatSummaryJobs(
   cfg: OpenClawConfig,
   jobs: readonly CronJob[],
@@ -30,34 +27,6 @@ function resolveHeartbeatSummaryJobs(
     const agentId = tryResolveCronJobEffectiveAgentId(job, defaultAgentId);
     return agentId ? [{ ...job, agentId }] : [];
   });
-}
-
-/** Publishes canonical scheduler facts for the synchronous v4 status projection. */
-export function publishHeartbeatSummarySnapshot(
-  cfg: OpenClawConfig,
-  jobs: readonly CronJob[],
-): void {
-  const summaries = new Map<string, HeartbeatSummary>();
-  for (const job of resolveHeartbeatSummaryJobs(cfg, jobs)) {
-    const agentId = job.agentId;
-    if (!summaries.has(agentId)) {
-      summaries.set(agentId, projectHeartbeatSummary(job));
-    }
-  }
-  publishedSummaries.set(cfg, summaries);
-}
-
-export function getPublishedHeartbeatSummary(
-  cfg: OpenClawConfig,
-  agentId?: string,
-): HeartbeatSummary {
-  const summary = publishedSummaries.get(cfg)?.get(agentId ? normalizeAgentId(agentId) : "");
-  return summary
-    ? {
-        ...summary,
-        deliveryPolicy: summary.deliveryPolicy ? { ...summary.deliveryPolicy } : undefined,
-      }
-    : projectHeartbeatSummary();
 }
 
 /** Missing state is empty; unreadable or unmigrated state remains an explicit failure. */

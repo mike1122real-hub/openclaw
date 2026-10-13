@@ -35,7 +35,7 @@ import { createGatewayHookDispatcher } from "../../gateway/server/hooks.js";
 import {
   consumeSelectedSystemEventEntries,
   enqueueRequiredSystemEventEntry,
-  peekDeliverableSystemEventEntries,
+  isSystemEventTurnOwned,
   peekSystemEventEntries,
   resetSystemEventsForTest,
 } from "../../infra/system-events.js";
@@ -791,9 +791,8 @@ it.for([
               status: "failed",
               executionStarted: false,
             });
-            expect(peekDeliverableSystemEventEntries(scope.sessionKey)).toContainEqual(
-              retainedOverflow,
-            );
+            expect(peekSystemEventEntries(scope.sessionKey)).toContainEqual(retainedOverflow);
+            expect(isSystemEventTurnOwned(scope.sessionKey, retainedOverflow)).toBe(false);
           }
           expect(starts).toHaveLength(1);
           for (const noticeState of observed) {
