@@ -147,37 +147,34 @@ describe("buildExternalRunFailureReply", () => {
     expect(reply.isGenericRunnerFailure).toBe(true);
   });
 
-  it.each(["529 overloaded"])(
-    "keeps preflight %s diagnostics verbose-gated",
-    (failure) => {
-      const message = `${failure}; reconnect before continuing. diagnostic-canary ${"x".repeat(1500)}`;
-      const input = {
-        message,
-        error: new AgentHarnessPreflightError(message, {
-          cause: new FailoverError("provider diagnostic", {
-            reason: failure.startsWith("401") ? "auth" : "overloaded",
-            status: failure.startsWith("401") ? 401 : 529,
-          }),
+  it.each(["529 overloaded"])("keeps preflight %s diagnostics verbose-gated", (failure) => {
+    const message = `${failure}; reconnect before continuing. diagnostic-canary ${"x".repeat(1500)}`;
+    const input = {
+      message,
+      error: new AgentHarnessPreflightError(message, {
+        cause: new FailoverError("provider diagnostic", {
+          reason: failure.startsWith("401") ? "auth" : "overloaded",
+          status: failure.startsWith("401") ? 401 : 529,
         }),
-      };
-      expect(
-        buildKnownAgentRunFailureReplyPayload({
-          err: input.error,
-          sessionCtx: { Provider: "discord", Surface: "discord", ChatType: "group" },
-          resolvedVerboseLevel: "off",
-        }),
-      ).toBeUndefined();
-      expect(buildExternalRunFailureReply(input)).toEqual({
-        text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
-        isGenericRunnerFailure: true,
-      });
-      const verbose = buildExternalRunFailureReply(input, { includeDetails: true });
-      expect(verbose.isGenericRunnerFailure).toBe(true);
-      expect(verbose.text).toContain("reconnect before continuing");
-      expect(verbose.text).toContain("diagnostic-canary");
-      expect(verbose.text).not.toContain("x".repeat(1500));
-    },
-  );
+      }),
+    };
+    expect(
+      buildKnownAgentRunFailureReplyPayload({
+        err: input.error,
+        sessionCtx: { Provider: "discord", Surface: "discord", ChatType: "group" },
+        resolvedVerboseLevel: "off",
+      }),
+    ).toBeUndefined();
+    expect(buildExternalRunFailureReply(input)).toEqual({
+      text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
+      isGenericRunnerFailure: true,
+    });
+    const verbose = buildExternalRunFailureReply(input, { includeDetails: true });
+    expect(verbose.isGenericRunnerFailure).toBe(true);
+    expect(verbose.text).toContain("reconnect before continuing");
+    expect(verbose.text).toContain("diagnostic-canary");
+    expect(verbose.text).not.toContain("x".repeat(1500));
+  });
 
   it("keeps raw failure details behind verbose opt-in", () => {
     const message = "Gateway SDK resource host is not bound";
