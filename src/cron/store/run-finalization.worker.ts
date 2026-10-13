@@ -51,6 +51,7 @@ export function finalizeCronRunsInWorker(
           };
           for (const [outcomeIndex, completed] of policy.outcomes.entries()) {
             const receipt = completed.runReceipt;
+            const admissionDeferred = isDeferredCronAdmission(completed.job, completed);
             const storedJob = jobs.get(completed.jobId);
             // Retention protects the marker still in storage until this mutation flushes.
             const pendingReceiptId =
@@ -74,7 +75,7 @@ export function finalizeCronRunsInWorker(
                     ? "skipped"
                     : completed.status,
                 finishedAtMs: completed.endedAt,
-                error: completed.error,
+                error: admissionDeferred ? CRON_ADMISSION_DEFERRED_RECEIPT_ERROR : completed.error,
               })
             ) {
               continue;
@@ -86,24 +87,13 @@ export function finalizeCronRunsInWorker(
               currentJob.state.runningReceiptId === receipt.receiptId;
             const job =
               currentJob && ownsRunningMarker ? currentJob : structuredClone(completed.job);
-            if (isDeferredCronAdmission(completed.job, completed)) {
+            if (admissionDeferred) {
               if (currentJob && ownsRunningMarker) {
                 delete currentJob.state.queuedAtMs;
                 delete currentJob.state.runningAtMs;
                 delete currentJob.state.runningReceiptId;
                 delete currentJob.state.runningScheduleChangeId;
                 outcome.upsertedJobs.push(currentJob);
-              }
-              if (receipt) {
-                finishCronRunReceiptInDatabase({
-                  database: db,
-                  receiptSchema,
-                  handle: receipt,
-                  pendingReceiptId,
-                  status: "skipped",
-                  finishedAtMs: completed.endedAt,
-                  error: CRON_ADMISSION_DEFERRED_RECEIPT_ERROR,
-                });
               }
               if (completed.request?.runId) {
                 outcome.eventPlans.push({ outcomeIndex, job });

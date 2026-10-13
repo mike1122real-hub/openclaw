@@ -71,7 +71,7 @@ legacy config or archiving files. Ambiguous input remains recoverable and the
 pending automation cannot execute. A completed provisioning receipt remains after
 job deletion, so repeated Doctor runs and restarts preserve operator edits and
 deletions. See [Heartbeat migration](/gateway/heartbeat) and the
-[shared-state policy fence](/reference/database-schemas/state-schema-history#state-schema-22).
+[shared-state policy fence](/reference/database-schemas/state-schema-history#state-schema-23).
 
 Candidate update admission validates the projected configuration without changing
 the live config, databases, or backups. The installed updater can then run
