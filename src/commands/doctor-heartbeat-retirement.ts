@@ -1,10 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { note } from "../../packages/terminal-core/src/note.js";
 import { listAgentIds } from "../agents/agent-scope-config.js";
-import {
-  prepareClawHeartbeatMigration,
-  finishClawHeartbeatMigration,
-} from "../claws/heartbeat-migration.js";
 import { inheritLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
@@ -58,6 +54,8 @@ export async function retireHeartbeatWithDoctor(
     await migrateHeartbeatOutcomes(cfg, env);
     return next;
   }
+  const { prepareClawHeartbeatMigration, finishClawHeartbeatMigration } =
+    await import("../claws/heartbeat-migration.js");
   const clawHandoff = await prepareClawHeartbeatMigration(cfg, { env });
   const storePath = resolveCronJobsStorePathFromConfig(cfg, env);
   const monitors = await ensureHeartbeatMonitorJobs(
