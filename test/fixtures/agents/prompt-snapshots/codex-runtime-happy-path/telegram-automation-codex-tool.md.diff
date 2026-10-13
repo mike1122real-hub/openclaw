@@ -1,5 +1,5 @@
---- telegram-direct-codex-message-tool.md	sha256=de245982d865c2be9b90295ef526dd66b658c31cc255a916d0e3ea028e24e4ab
-+++ telegram-automation-codex-tool.md	sha256=d3a64d79687f28dbad16318d89ab594062d5c8841353e961965e6f834b08dd44
+--- telegram-direct-codex-message-tool.md	sha256=a37b8625ca8e267ba529e0ff4712dc199b630a5933dba6c46dd64f75da3a2b5e
++++ telegram-automation-codex-tool.md	sha256=e75a925bd665b85e8c9cd9eadbf504eefc4e022382c1da7728b5c32ad6cad680
 @@ -1,1 +1,1 @@
 -# Telegram Direct Codex Message Tool Turn
 +# Telegram Direct Codex Automation Turn
@@ -24,8 +24,8 @@
 -      "value": "{\"sender\":{\"id\":\"1000001\",\"name\":\"Pash\",\"username\":\"pash\"}}"
 -    },
 @@ -152,1 +148,1 @@
--      "value": "Current source-delivery policy for this turn (replaces earlier source-delivery guidance):\nVisible source replies are not automatically delivered for this run. Use `message(action=send)` for user-visible source-channel output. For progress, set `final=false`. Set `final=true`, or omit it, for the completed reply to the current source conversation; OpenClaw stops after confirming delivery. Do not repeat visible message content in your final answer.\n\n`send`: `message`; current source is default target. Set `target` only elsewhere.\n\nCommentary is optional progress and may be hidden. Answer user questions or status requests received during ongoing work with `message(action=send, final=false)`, then continue the task. Before finishing, deliver every still-pending answer through this turn's visible-reply route. Do not repeat answers already delivered."
-+      "value": "Current source-delivery policy for this turn (replaces earlier source-delivery guidance):\nYou can participate in the conversation throughout your work. Use `message` when you have something worth saying; you don’t need to wait until you’re finished, and sending a message doesn’t end your task. OpenClaw delivers your final response automatically.\n\n`send`: `message`; current source is default target. Set `target` only elsewhere.\n\nCommentary is optional progress and may be hidden. Answer user questions or status requests received during ongoing work with `message(action=send, final=false)`, then continue the task. Before finishing, deliver every still-pending answer through this turn's visible-reply route. Do not repeat answers already delivered."
+-      "value": "Current source-delivery policy for this turn (replaces earlier source-delivery guidance):\nVisible source replies are not automatically delivered for this run. Use `message(action=send)` for source output. For progress, set `final=false`. Set `final=true`, or omit it, for a completed reply to the current source. An added reaction to the current source message with `final=true` can also complete the reply. Do not repeat delivered content.\n\n`send`: `message`; current source is default target. Set `target` only elsewhere.\n\nCommentary is optional progress and may be hidden. Answer user questions or status requests received during ongoing work with `message(action=send, final=false)`, then continue the task. Before finishing, deliver every still-pending answer through this turn's visible-reply route. Do not repeat answers already delivered."
++      "value": "Current source-delivery policy for this turn (replaces earlier source-delivery guidance):\nUse `message` with `final=false` for progress. A completed send to the current source conversation (`final=true`, or omitted) or an added reaction to its current message with `final=true` is your complete reply. Do not repeat delivered content. Otherwise, OpenClaw delivers your final response automatically.\n\n`send`: `message`; current source is default target. Set `target` only elsewhere.\n\nCommentary is optional progress and may be hidden. Answer user questions or status requests received during ongoing work with `message(action=send, final=false)`, then continue the task. Before finishing, deliver every still-pending answer through this turn's visible-reply route. Do not repeat answers already delivered."
 @@ -183,2 +179,2 @@
 -  "threadId": "thread-telegram-direct-codex-message-tool",
 -  "turnTrigger": "user"
@@ -35,15 +35,15 @@
 -    "dynamicToolsFrom": "codex-dynamic-tools.telegram-direct.json",
 +    "dynamicToolsFrom": "codex-dynamic-tools.automation-turn.json",
 @@ -236,2 +232,2 @@
--    "chars": 1348,
--    "roughTokens": 337
-+    "chars": 1115,
-+    "roughTokens": 279
+-    "chars": 1338,
+-    "roughTokens": 335
++    "chars": 1166,
++    "roughTokens": 292
 @@ -256,2 +252,2 @@
--    "chars": 73501,
--    "roughTokens": 18376
-+    "chars": 45656,
-+    "roughTokens": 11414
+-    "chars": 73623,
+-    "roughTokens": 18406
++    "chars": 45778,
++    "roughTokens": 11445
 @@ -260,2 +256,2 @@
 -    "chars": 3194,
 -    "roughTokens": 799
@@ -55,15 +55,15 @@
 +    "chars": 1246,
 +    "roughTokens": 312
 @@ -268,2 +264,2 @@
--    "chars": 27580,
--    "roughTokens": 6895
-+    "chars": 28422,
-+    "roughTokens": 7106
+-    "chars": 27570,
+-    "roughTokens": 6893
++    "chars": 28473,
++    "roughTokens": 7119
 @@ -272,2 +268,2 @@
--    "chars": 101083,
--    "roughTokens": 25271
-+    "chars": 74080,
-+    "roughTokens": 18520
+-    "chars": 101195,
+-    "roughTokens": 25299
++    "chars": 74253,
++    "roughTokens": 18564
 @@ -276,2 +272,2 @@
 -    "chars": 879,
 -    "roughTokens": 220
@@ -89,8 +89,8 @@
 -```
 -
 @@ -535,1 +533,1 @@
--Visible source replies are not automatically delivered for this run. Use `message(action=send)` for user-visible source-channel output. For progress, set `final=false`. Set `final=true`, or omit it, for the completed reply to the current source conversation; OpenClaw stops after confirming delivery. Do not repeat visible message content in your final answer.
-+You can participate in the conversation throughout your work. Use `message` when you have something worth saying; you don’t need to wait until you’re finished, and sending a message doesn’t end your task. OpenClaw delivers your final response automatically.
+-Visible source replies are not automatically delivered for this run. Use `message(action=send)` for source output. For progress, set `final=false`. Set `final=true`, or omit it, for a completed reply to the current source. An added reaction to the current source message with `final=true` can also complete the reply. Do not repeat delivered content.
++Use `message` with `final=false` for progress. A completed send to the current source conversation (`final=true`, or omitted) or an added reaction to its current message with `final=true` is your complete reply. Do not repeat delivered content. Otherwise, OpenClaw delivers your final response automatically.
 @@ -554,1 +551,0 @@
 -[OpenClaw conversation info: sender={"id":"1000001","name":"Pash","username":"pash"}]
 @@ -573,1 +570,1 @@
