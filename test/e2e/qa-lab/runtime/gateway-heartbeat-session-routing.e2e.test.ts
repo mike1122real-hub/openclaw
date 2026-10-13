@@ -323,16 +323,15 @@ describe("Gateway heartbeat session routing", () => {
 
       let gateway: Awaited<ReturnType<typeof startGatewayWithClient>> | undefined;
       onTestFailed(() => {
-        console.error(
-          "[heartbeat-routing-failure]",
-          JSON.stringify({
+        process.stderr.write(
+          `[heartbeat-routing-failure] ${JSON.stringify({
             phase,
             cleanupPhase,
             phases,
             cronRegistrations,
             cronEvents,
             providerRequests: providerRequests.length,
-          }),
+          })}\n`,
         );
       });
       const fixtureSettled = createDeferred();
