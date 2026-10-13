@@ -78,6 +78,20 @@ const state = resolveGlobalSingleton(Symbol.for("openclaw.pluginStateObservation
         [...change.receipt.facts.values()].every((fact) => fact.kind !== "unknown")
           ? [...change.receipt.facts.keys()]
           : undefined;
+      if (knownKeys && writeRevision !== undefined) {
+        // The receipt already replaced affected keys; contiguous sibling writes preserve the rest.
+        for (const key of entries.keys()) {
+          const entry = entries.peek(key)!;
+          if (
+            entry.identity === identity &&
+            entry.writeRevision !== undefined &&
+            (entry.writeRevision === writeRevision ||
+              writeRevision === ((entry.writeRevision + 1) | 0))
+          ) {
+            entry.writeRevision = writeRevision;
+          }
+        }
+      }
       for (const key of namespaces.keys()) {
         const entry = namespaces.peek(key)!;
         if (entry.identity !== identity) {

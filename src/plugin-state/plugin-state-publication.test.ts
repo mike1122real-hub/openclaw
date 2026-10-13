@@ -216,6 +216,10 @@ describe("plugin state committed facts", () => {
       const options = { namespace: "receipts", maxEntries: 10, env };
       const store = createPluginStateKeyedStore<{ count: number }>("receipt-test", options);
       const native = createPluginStateSyncKeyedStore<{ count: number }>("receipt-test", options);
+      const sibling = createPluginStateSyncKeyedStore("receipt-test", {
+        ...options,
+        namespace: "sibling",
+      });
       await store.register("key", { count: 1 });
       const dispatch = vi.spyOn(stateWorker, "runOpenClawStateWorkerOperation");
       const read = async (expected: { count: number } | undefined) => {
@@ -227,6 +231,10 @@ describe("plugin state committed facts", () => {
         ]);
         expect(dispatch).not.toHaveBeenCalled();
       };
+      await read({ count: 1 });
+      sibling.register("other", true);
+      await read({ count: 1 });
+      await store.register("another", { count: 100 });
       await read({ count: 1 });
       const first = await store.lookup("key");
       first!.count = 99;
@@ -748,7 +756,12 @@ describe("plugin state committed facts", () => {
         } finally {
           intercept.mockRestore();
         }
+        const dispatch = vi.spyOn(stateWorker, "runOpenClawStateWorkerOperation");
+        await expect(store.lookupMany(["key"])).resolves.toEqual([{ ok: true, value: "raw" }]);
+        dispatch.mockClear();
+        await expect(store.lookupMany(["key"])).resolves.toEqual([{ ok: true, value: "raw" }]);
         await expect(store.lookup("key")).resolves.toBe("raw");
+        expect(dispatch).not.toHaveBeenCalled();
       },
     );
   });
@@ -768,6 +781,9 @@ describe("plugin state committed facts", () => {
         { env },
       );
       await expect(store.lookup("key")).resolves.toBe("raw");
+      const dispatch = vi.spyOn(stateWorker, "runOpenClawStateWorkerOperation");
+      await expect(store.lookup("key")).resolves.toBe("raw");
+      expect(dispatch).not.toHaveBeenCalled();
     });
   });
 });

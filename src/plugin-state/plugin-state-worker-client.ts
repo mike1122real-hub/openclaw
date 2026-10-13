@@ -1,3 +1,4 @@
+import { toUSVString } from "node:util";
 import { err, ok, type Result } from "@openclaw/normalization-core/result";
 import { assertSessionEntriesCurrentAdmission } from "../config/sessions/session-entry-current-admission.js";
 import type {
@@ -140,6 +141,9 @@ async function execute<Key extends keyof PluginStateWorkerOperations>(
   let publication: ReturnType<typeof beginPluginStatePublication> | undefined;
   let installObservation: ReturnType<typeof preparePluginStateObservationCacheRead> | undefined;
   let installEntries: ReturnType<typeof preparePluginStateEntriesCacheRead> | undefined;
+  let installLookups:
+    | Array<{ key: string; install: ReturnType<typeof preparePluginStateObservationCacheRead> }>
+    | undefined;
   try {
     const context =
       capturedContext ?? captureOpenClawStateWorkerContext({ path: databasePath, env });
@@ -262,6 +266,15 @@ async function execute<Key extends keyof PluginStateWorkerOperations>(
           typedCommand.input,
           writeRevision,
         );
+      } else {
+        installLookups = keys.map((key) => ({
+          key: toUSVString(key),
+          install: preparePluginStateObservationCacheRead(
+            identity,
+            { ...typedCommand.input, key },
+            writeRevision,
+          ),
+        }));
       }
     }
     // A write-only await here would let later reads overtake it before broker admission.
@@ -289,6 +302,12 @@ async function execute<Key extends keyof PluginStateWorkerOperations>(
       );
       if (!result.ok) {
         throw restorePluginStateWorkerFailure(result.error);
+      }
+      if (installLookups && result.readRows) {
+        const rows = new Map(result.readRows.map((row) => [row.entry_key, row]));
+        for (const { key, install } of installLookups) {
+          install(rows.get(key));
+        }
       }
       if (command.type === "pluginState.observe") {
         const observation =
