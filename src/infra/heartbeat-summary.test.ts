@@ -9,6 +9,7 @@ import {
 const receipts = vi.hoisted(() => ({
   read: vi.fn<typeof import("../cron/proactive-job-receipt.js").readDefaultProactiveJobsAsync>(),
 }));
+// mock-isolation: summary projection consumes a supplied receipt snapshot without opening shared state.
 vi.mock("../cron/proactive-job-receipt.js", () => ({
   readDefaultProactiveJobsAsync: receipts.read,
 }));
