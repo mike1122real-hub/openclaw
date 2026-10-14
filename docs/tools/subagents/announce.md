@@ -131,9 +131,13 @@ the newer producer end time owns the reply. Equal end times retain the first
 accepted reply; a correction with a newer end time can replace it.
 
 OpenClaw preserves prompt-data escaping and stable order when it delivers several
-results together. It does not shorten an answer to fit the former announce
-projection limits. The bounded lifecycle snapshot remains separate from the
-complete answer sent to the parent.
+results together. Completion findings target a shared 160,000-character budget,
+including escaping and framing. Small answers stay intact; larger answers keep
+their beginning and an explicit truncation marker pointing to `sessions_history`
+with the child session key. Every child keeps its task and status. An extreme
+cohort's required child blocks can exceed the target even with minimal result
+heads. The bounded lifecycle snapshot and retained complete transcript stay
+separate from these prompt limits.
 
 A successful child with an empty final reply remains in the batch with its task
 identity, `ok` status, and `(no output)` result. Its successful execution status

@@ -12,6 +12,7 @@ import { isSameSubagentRunOwner } from "../registry/subagent-run-generation.js";
 import { withSubagentSessionSource } from "../spawn/subagent-session-source.js";
 
 const MAX_CHILD_COMPLETION_FIELD_CHARS = 256;
+const MAX_CHILD_COMPLETION_FINDINGS_CHARS = 160_000;
 
 type OutputRuntime = typeof import("./subagent-announce.runtime.js");
 type SubagentAnnounceResultDeps = Pick<
@@ -174,10 +175,8 @@ export function buildChildCompletionFindings(
     if (a.createdAt !== b.createdAt) {
       return a.createdAt - b.createdAt;
     }
-    const aEnded =
-      typeof a.execution.endedAt === "number" ? a.execution.endedAt : Number.MAX_SAFE_INTEGER;
-    const bEnded =
-      typeof b.execution.endedAt === "number" ? b.execution.endedAt : Number.MAX_SAFE_INTEGER;
+    const aEnded = a.execution.endedAt ?? Number.MAX_SAFE_INTEGER;
+    const bEnded = b.execution.endedAt ?? Number.MAX_SAFE_INTEGER;
     if (aEnded !== bEnded) {
       return aEnded - bEnded;
     }
@@ -190,7 +189,7 @@ export function buildChildCompletionFindings(
         : 0;
   });
 
-  const sections: string[] = [];
+  const sections = [];
   for (const [index, child] of sorted.entries()) {
     const resultText = child.announceResult ?? resolveSubagentCompletionResultText(child);
     const outcome = describeSubagentOutcome(child);
@@ -212,8 +211,12 @@ export function buildChildCompletionFindings(
       child.childSessionKey.trim() ||
       `child ${index + 1}`;
     const displayIndex = sections.length + 1;
-    sections.push(
-      [
+    const result = { label: "Child result", text: resultText?.trim() || "(no output)" };
+    sections.push({
+      result,
+      childSessionKey: child.childSessionKey,
+      resultBlock: wrapPromptDataBlock(result) || "Child result: (no output)",
+      header: [
         wrapPromptDataBlock({
           label: `${displayIndex}. Child task`,
           text: title,
@@ -221,17 +224,38 @@ export function buildChildCompletionFindings(
           truncationMarker: "…",
         }),
         `status: ${truncateUtf16WithEllipsis(outcome, MAX_CHILD_COMPLETION_FIELD_CHARS)}`,
-        wrapPromptDataBlock({
-          label: "Child result",
-          text: resultText?.trim() || "(no output)",
-        }) || "Child result: (no output)",
       ].join("\n"),
-    );
+    });
   }
 
   if (sections.length === 0) {
     return undefined;
   }
 
-  return ["Child completion results:", "", ...sections].join("\n\n");
+  const heading = "Child completion results:\n\n";
+  let remaining = MAX_CHILD_COMPLETION_FINDINGS_CHARS - heading.length;
+  for (const section of sections) {
+    remaining -= section.header.length + 3;
+  }
+  const resultFrameChars = wrapPromptDataBlock({ label: "Child result", text: "x" }).length - 1;
+  // Allocate short answers first so unused shares stay available to larger results.
+  const bySize = sections.toSorted((a, b) => a.resultBlock.length - b.resultBlock.length);
+  for (const [index, section] of bySize.entries()) {
+    const share = Math.floor(remaining / (bySize.length - index));
+    if (section.resultBlock.length > share) {
+      const truncationMarker = `[result truncated; full text: sessions_history sessionKey=${JSON.stringify(section.childSessionKey)}]`;
+      // Every child keeps its identity, retrieval pointer and at least one code point,
+      // even if an extreme cohort's mandatory roster alone exceeds the batch target.
+      const minimum = wrapPromptDataBlock({ ...section.result, text: truncationMarker }).length + 4;
+      section.resultBlock = wrapPromptDataBlock({
+        ...section.result,
+        maxEscapedChars: Math.max(minimum, share) - resultFrameChars,
+        truncationMarker,
+      });
+    }
+    remaining -= section.resultBlock.length;
+  }
+  return [heading, ...sections.map(({ header, resultBlock }) => `${header}\n${resultBlock}`)].join(
+    "\n\n",
+  );
 }
