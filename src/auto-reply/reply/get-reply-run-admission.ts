@@ -359,6 +359,7 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
   )
     ? undefined
     : rawActiveSessionIdForInterrupt;
+  assertPreparationActive();
   if (
     activeRunQueueMode === "interrupt" &&
     !isRoomEvent &&
