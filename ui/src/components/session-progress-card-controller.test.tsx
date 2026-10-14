@@ -26,10 +26,11 @@ function mountProgress(
     const owner = useSolidControllerHost();
     host = owner.host;
     progress = new SessionProgressCardController(host, { gateway: () => gateway, target });
-    return createMemo(() => {
+    const content = createMemo(() => {
       owner.revision();
       return redraw();
     });
+    return <>{content()}</>;
   });
   flush();
   return { ...view, progress, host, redraw };
