@@ -194,6 +194,10 @@ await runWithFailedTrailer("macos-native", async () => {
       OPENCLAW_CONFIG_PATH: path.join(state, "openclaw.json"),
       OPENCLAW_TEST_MENU_CAPTURE_DIR: menuCaptures,
     });
+    if (appHost) {
+      // Preserve primary CLI failure reasons from disposable recovery commands in native diagnostics.
+      childEnv.OPENCLAW_DEBUG = "1";
+    }
 
     // Keep SwiftPM's build cache available without inheriting the runner's app state.
     const cache = path.join(resourceHome, "Library/Caches");
