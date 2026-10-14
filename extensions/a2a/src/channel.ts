@@ -7,6 +7,7 @@ import {
   createMessageReceiptFromOutboundResults,
   defineChannelMessageAdapter,
 } from "openclaw/plugin-sdk/channel-outbound";
+import { isReplyPayloadTerminalContent } from "openclaw/plugin-sdk/reply-payload";
 import { DEFAULT_ACCOUNT_ID } from "./accounts.js";
 import { A2A_CHANNEL_ID, a2aChannelSetupPlugin } from "./channel-base.js";
 import { startA2aGatewayAccount } from "./gateway.js";
@@ -46,6 +47,8 @@ export const a2aChannelPlugin: ChannelPlugin<ResolvedA2aChannelAccount> = create
   base: {
     ...a2aChannelSetupPlugin,
     messaging: {
+      transformReplyPayload: ({ payload }) =>
+        payload.isError || !isReplyPayloadTerminalContent(payload) ? null : payload,
       normalizeTarget: normalizeA2aChannelTarget,
       inferTargetChatType: () => "direct",
       targetResolver: {

@@ -1,5 +1,6 @@
 // Proves follow-up batch ownership through the real channel route and durable-send boundary.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { a2aChannelPlugin } from "../../../extensions/a2a/api.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
@@ -156,6 +157,40 @@ afterEach(() => {
 });
 
 describe("follow-up delivery channel boundary", () => {
+  it.each(["a2a", "slack"])(
+    "delivers queued terminal content and keeps host notices specific to human channels: %s",
+    async (channel) => {
+      setActivePluginRegistry(
+        createTestRegistry([
+          { pluginId: "a2a", plugin: a2aChannelPlugin, source: "test" },
+          { pluginId: "slack", plugin: createChannelPlugin("slack"), source: "test" },
+        ]),
+      );
+      const turn = createTurn({ messageProvider: channel, originatingChannel: channel });
+      turn.queued.originatingTo = channel === "a2a" ? "a2a:hermes" : "channel:C1";
+      const payloads = [
+        { text: "thinking level clamped", isStatusNotice: true },
+        { text: "run failed", isError: true },
+        { text: "agent answer" },
+      ];
+      channelState.outcomes = ["delivered", "delivered", "delivered"];
+      const onBlockReply = vi.fn(async () => {});
+
+      await deliverFollowupDecision({
+        decision: { kind: "deliver", payloads },
+        turn,
+        defaults: createDefaults(onBlockReply),
+        runId: "run-1",
+        runFollowup: vi.fn(async () => {}),
+      });
+
+      expect(channelState.deliver.mock.calls.map(([send]) => send.payloads)).toEqual(
+        channel === "a2a" ? [[{ text: "agent answer" }]] : payloads.map((payload) => [payload]),
+      );
+      expect(onBlockReply).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     {
       name: "optional group generic silence",
