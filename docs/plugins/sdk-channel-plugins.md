@@ -417,7 +417,8 @@ when initialization must finish before the child runs.
       can exclude these in `messaging.transformReplyPayload` while still preserving
       run failures through `replyOptions.onAgentRunTerminalOutcome` and their native
       task status. This callback stays bound to the originating request when its
-      turn runs as a queued followup. Human-facing channels should continue to
+      turn runs as a queued followup; collected turns notify every source's terminal
+      observer. Human-facing channels should continue to
       deliver useful host notices.
 
       When cloning a host-supplied reply, use `copyReplyPayloadMetadata(source, clone)`

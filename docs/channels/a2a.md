@@ -145,7 +145,8 @@ Agent replies, including queued followups, deliver only terminal reply content t
 Host status notices, including metadata-only diagnostics, and run-failure messages are not
 forwarded as new peer messages or task artifacts. A failed agent run instead marks its
 originating task `TASK_STATE_FAILED` with the reason `Agent run failed`, including when the
-run was queued. This does not change error reporting on human-facing channels.
+run was queued. If collect mode combines requests, a failed run marks every originating
+task failed. This does not change error reporting on human-facing channels.
 
 ## Configuration reference
 
