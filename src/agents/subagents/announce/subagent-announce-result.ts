@@ -257,8 +257,11 @@ export function buildChildCompletionFindings(
   let included = sections.length;
   let summary = "";
   // Keep a stable prefix at the result-head floor, reserving the actual overflow line.
-  while (minimumChars + (summary ? summary.length + 2 : 0) > available) {
-    const omitted = sections[--included];
+  for (const omitted of sections.toReversed()) {
+    if (minimumChars + (summary ? summary.length + 2 : 0) <= available) {
+      break;
+    }
+    included -= 1;
     minimumChars -= omitted.header.length + omitted.minimumChars + 3;
     const keys = wrapPromptDataBlock({
       label: "First child session keys",

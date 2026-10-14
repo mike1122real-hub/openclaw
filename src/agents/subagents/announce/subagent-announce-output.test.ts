@@ -332,9 +332,7 @@ describe("buildChildCompletionFindings", () => {
     expect(shown.length + omitted).toBe(children.length);
     expect(shown).toEqual(Array.from({ length: shown.length }, (_, index) => index));
     expect(findings.match(/^status: ok$/gm)).toHaveLength(shown.length);
-    const heads = [...findings.matchAll(/\n(Result \d+: x+)\[result truncated;/g)].map(
-      (match) => match[1],
-    );
+    const heads = findings.match(/^Result \d+: x+(?=\[result truncated;)/gm) ?? [];
     expect(heads).toHaveLength(shown.length);
     for (const [index, head] of heads.entries()) {
       expect(head).toMatch(new RegExp(`^Result ${index}: `));
