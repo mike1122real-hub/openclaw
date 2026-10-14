@@ -23,6 +23,16 @@ function createFixture() {
 }
 
 describe("declared SQLite migration scope", () => {
+  it("does not conflate a declared table with an undeclared Unicode name", async () => {
+    using database = createFixture();
+    database.exec("CREATE TABLE Keyed (value TEXT)");
+    await expect(
+      assertSqliteMigrationScopePreserved(database, ["keyed"], () =>
+        database.exec("CREATE INDEX keyed_value ON keyed(value)"),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it("allows declared table rewrites and explicit metadata changes while preserving all other tables", async () => {
     using database = createFixture();
     const result = await assertSqliteMigrationScopePreserved(

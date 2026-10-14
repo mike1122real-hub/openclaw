@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { quoteSqliteIdentifier } from "../infra/sqlite-schema-sql.js";
+import { foldSqliteIdentifierCase, quoteSqliteIdentifier } from "../infra/sqlite-schema-sql.js";
 
 type TableSnapshot = { schema: string; content: string };
 
@@ -27,7 +27,9 @@ function captureUndeclaredTables(
     snapshots.set(String(object.name), {
       schema: JSON.stringify(
         objects.filter(
-          (entry) => String(entry.tbl_name).toLowerCase() === String(object.name).toLowerCase(),
+          (entry) =>
+            foldSqliteIdentifierCase(String(entry.tbl_name)) ===
+            foldSqliteIdentifierCase(String(object.name)),
         ),
       ),
       content: "",
@@ -93,7 +95,10 @@ function captureUndeclaredTables(
     }
     snapshots.set(name, {
       schema: JSON.stringify(
-        objects.filter((object) => String(object.tbl_name).toLowerCase() === name.toLowerCase()),
+        objects.filter(
+          (object) =>
+            foldSqliteIdentifierCase(String(object.tbl_name)) === foldSqliteIdentifierCase(name),
+        ),
       ),
       content: hash.digest("hex"),
     });
