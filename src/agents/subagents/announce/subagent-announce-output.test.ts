@@ -305,9 +305,47 @@ describe("buildChildCompletionFindings", () => {
       expect(findings).toContain(`\nTask ${index}\n</prompt-data>`);
       expect(findings).toContain(`\nResult ${index}: `);
       expect(findings).toContain(
-        `[result truncated; history (also bounded): sessions_history sessionKey="${child.childSessionKey}"]`,
+        `[result truncated; sessions_history sessionKey="${child.childSessionKey}" (text fields truncated to 4,000 characters)]`,
       );
     }
+    expect(buildChildCompletionFindings(children.toReversed())).toBe(findings);
+  });
+
+  it("strictly bounds thousands of children with an ordered, counted overflow summary", () => {
+    const children = Array.from({ length: 5_000 }, (_, index) => ({
+      childSessionKey: `agent:main:subagent:${String(index).padStart(4, "0")}`,
+      task: `Task ${index}`,
+      createdAt: 1,
+      announceResult: `Result ${index}: `.padEnd(512, "x"),
+      execution: { outcome: { status: "ok" as const } },
+    }));
+    const findings = buildChildCompletionFindings(children)!;
+    const shown = [...findings.matchAll(/\nTask (\d+)\n<\/prompt-data>/g)].map((match) =>
+      Number(match[1]),
+    );
+    const summary = findings.split("\n").at(-1)!;
+    const omitted = Number(summary.match(/^(\d+) additional child results omitted;/)?.[1]);
+
+    expect(findings.length).toBeLessThanOrEqual(160_000);
+    expect(shown.length).toBeGreaterThan(0);
+    expect(omitted).toBeGreaterThan(0);
+    expect(shown.length + omitted).toBe(children.length);
+    expect(shown).toEqual(Array.from({ length: shown.length }, (_, index) => index));
+    expect(findings.match(/^status: ok$/gm)).toHaveLength(shown.length);
+    const heads = [...findings.matchAll(/\n(Result \d+: x+)\[result truncated;/g)].map(
+      (match) => match[1],
+    );
+    expect(heads).toHaveLength(shown.length);
+    for (const [index, head] of heads.entries()) {
+      expect(head).toMatch(new RegExp(`^Result ${index}: `));
+      expect(head.length).toBeGreaterThanOrEqual(64);
+    }
+    expect(summary.length).toBeLessThanOrEqual(1_024);
+    for (const child of children.slice(shown.length, shown.length + 3)) {
+      expect(summary).toContain(child.childSessionKey);
+    }
+    expect(summary).toContain("Inspect remaining children with subagents and sessions_history");
+    expect(summary).toContain("text fields truncated to 4,000 characters");
     expect(buildChildCompletionFindings(children.toReversed())).toBe(findings);
   });
 

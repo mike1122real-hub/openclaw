@@ -13,6 +13,7 @@ import { withSubagentSessionSource } from "../spawn/subagent-session-source.js";
 
 const MAX_CHILD_COMPLETION_FIELD_CHARS = 256;
 const MAX_CHILD_COMPLETION_FINDINGS_CHARS = 160_000;
+const MIN_CHILD_COMPLETION_RESULT_CHARS = 64;
 
 type OutputRuntime = typeof import("./subagent-announce.runtime.js");
 type SubagentAnnounceResultDeps = Pick<
@@ -189,6 +190,7 @@ export function buildChildCompletionFindings(
         : 0;
   });
 
+  const resultFrameChars = wrapPromptDataBlock({ label: "Child result", text: "x" }).length - 1;
   const sections = [];
   for (const [index, child] of sorted.entries()) {
     const resultText = child.announceResult ?? resolveSubagentCompletionResultText(child);
@@ -211,11 +213,25 @@ export function buildChildCompletionFindings(
       child.childSessionKey.trim() ||
       `child ${index + 1}`;
     const displayIndex: number = sections.length + 1;
-    const result = { label: "Child result", text: resultText?.trim() || "(no output)" };
+    const result = {
+      label: "Child result",
+      text: resultText?.trim() || "(no output)",
+      truncationMarker: `[result truncated; sessions_history sessionKey=${JSON.stringify(child.childSessionKey)} (text fields truncated to 4,000 characters)]`,
+    };
+    const resultBlock = wrapPromptDataBlock(result) || "Child result: (no output)";
     sections.push({
       result,
       childSessionKey: child.childSessionKey,
-      resultBlock: wrapPromptDataBlock(result) || "Child result: (no output)",
+      resultBlock,
+      minimumChars: (
+        wrapPromptDataBlock({
+          ...result,
+          maxEscapedChars:
+            wrapPromptDataBlock({ ...result, text: result.truncationMarker }).length -
+            resultFrameChars +
+            MIN_CHILD_COMPLETION_RESULT_CHARS,
+        }) || resultBlock
+      ).length,
       header: [
         wrapPromptDataBlock({
           label: `${displayIndex}. Child task`,
@@ -233,29 +249,46 @@ export function buildChildCompletionFindings(
   }
 
   const heading = "Child completion results:\n\n";
-  let remaining = MAX_CHILD_COMPLETION_FINDINGS_CHARS - heading.length;
-  for (const section of sections) {
-    remaining -= section.header.length + 3;
+  const available = MAX_CHILD_COMPLETION_FINDINGS_CHARS - heading.length;
+  let minimumChars = sections.reduce(
+    (total, section) => total + section.header.length + section.minimumChars + 3,
+    0,
+  );
+  let included = sections.length;
+  let summary = "";
+  // Keep a stable prefix at the result-head floor, reserving the actual overflow line.
+  while (minimumChars + (summary ? summary.length + 2 : 0) > available) {
+    const omitted = sections[--included];
+    minimumChars -= omitted.header.length + omitted.minimumChars + 3;
+    const keys = wrapPromptDataBlock({
+      label: "First child session keys",
+      text: JSON.stringify(
+        sections.slice(included, included + 3).map((row) => row.childSessionKey),
+      ),
+      maxEscapedChars: MAX_CHILD_COMPLETION_FIELD_CHARS,
+      truncationMarker: "…",
+    }).replaceAll("\n", " ");
+    summary = `${sections.length - included} additional child results omitted; ${keys}. Inspect remaining children with subagents and sessions_history (text fields truncated to 4,000 characters).`;
   }
-  const resultFrameChars = wrapPromptDataBlock({ label: "Child result", text: "x" }).length - 1;
-  // Allocate short answers first so unused shares stay available to larger results.
-  const bySize = sections.toSorted((a, b) => a.resultBlock.length - b.resultBlock.length);
+  let remaining = available - minimumChars - (summary ? summary.length + 2 : 0);
+  const visible = sections.slice(0, included);
+  // Allocate small outstanding answers first, then share the rest above each child's floor.
+  const bySize = visible.toSorted(
+    (a, b) => a.resultBlock.length - a.minimumChars - (b.resultBlock.length - b.minimumChars),
+  );
   for (const [index, section] of bySize.entries()) {
-    const share = Math.floor(remaining / (bySize.length - index));
+    const share = section.minimumChars + Math.floor(remaining / (bySize.length - index));
     if (section.resultBlock.length > share) {
-      const truncationMarker = `[result truncated; history (also bounded): sessions_history sessionKey=${JSON.stringify(section.childSessionKey)}]`;
-      // Every child keeps its identity, retrieval pointer and at least one code point,
-      // even if an extreme cohort's mandatory roster alone exceeds the batch target.
-      const minimum = wrapPromptDataBlock({ ...section.result, text: truncationMarker }).length + 4;
       section.resultBlock = wrapPromptDataBlock({
         ...section.result,
-        maxEscapedChars: Math.max(minimum, share) - resultFrameChars,
-        truncationMarker,
+        maxEscapedChars: share - resultFrameChars,
       });
     }
-    remaining -= section.resultBlock.length;
+    remaining -= section.resultBlock.length - section.minimumChars;
   }
-  return [heading, ...sections.map(({ header, resultBlock }) => `${header}\n${resultBlock}`)].join(
-    "\n\n",
-  );
+  return [
+    heading,
+    ...visible.map(({ header, resultBlock }) => `${header}\n${resultBlock}`),
+    ...(summary ? [summary] : []),
+  ].join("\n\n");
 }
