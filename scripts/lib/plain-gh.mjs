@@ -1,7 +1,6 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 
 /** @typedef {import("node:child_process").ExecFileSyncOptions} ExecFileSyncOptions */
 /** @typedef {import("node:child_process").ExecFileSyncOptionsWithBufferEncoding} ExecFileSyncOptionsWithBufferEncoding */
@@ -15,7 +14,84 @@ import { promisify } from "node:util";
  */
 
 const PLAIN_GH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
-const execFileAsync = promisify(execFile);
+let activeAsyncGh = 0;
+const pendingAsyncGh = [];
+
+// Share the process-wide budget across protected-writer and cache-aware reads.
+async function runGhAsync(file, args, options) {
+  if (activeAsyncGh >= 4) {
+    await new Promise((resolve) => {
+      pendingAsyncGh.push(resolve);
+    });
+  } else {
+    activeAsyncGh += 1;
+  }
+  try {
+    return await new Promise((resolve, reject) => {
+      const child = spawn(file, args, {
+        ...options,
+        stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
+      });
+      const output = { stdout: [], stderr: [] };
+      const lengths = { stdout: 0, stderr: 0 };
+      const maxBuffer = options.maxBuffer ?? PLAIN_GH_MAX_BUFFER_BYTES;
+      /** @type {Error | undefined} */
+      let failure;
+      for (const stream of ["stdout", "stderr"]) {
+        child[stream]?.on("data", (bytes) => {
+          const chunk = Buffer.from(bytes);
+          lengths[stream] += chunk.length;
+          if (lengths[stream] > maxBuffer && !failure) {
+            failure = Object.assign(new Error(`${stream} maxBuffer length exceeded`), {
+              code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+            });
+            child.kill(options.killSignal ?? "SIGTERM");
+          }
+          if (lengths[stream] <= maxBuffer) {
+            output[stream].push(chunk);
+          }
+        });
+      }
+      child.on("error", (error) => {
+        failure ??= error;
+      });
+      // Settle only after streams and the child close, including failure paths.
+      child.on("close", (code, signal) => {
+        const decode = (chunks) => {
+          const bytes = Buffer.concat(chunks);
+          return options.encoding && options.encoding !== "buffer"
+            ? bytes.toString(options.encoding)
+            : bytes;
+        };
+        const stdout = decode(output.stdout),
+          stderr = decode(output.stderr);
+        if (failure || code !== 0) {
+          const error = failure ?? new Error(`Command failed: ${file}\n${String(stderr)}`);
+          Object.assign(error, {
+            ...(failure ? {} : { code }),
+            status: typeof code === "number" ? code : 1,
+            signal,
+            killed: child.killed ?? false,
+            stdout,
+            stderr,
+            output: [null, stdout, stderr],
+          });
+          reject(error);
+        } else {
+          resolve(stdout);
+        }
+      });
+      child.stdin?.end(options.input);
+    });
+  } finally {
+    const next = pendingAsyncGh.shift();
+    if (next) {
+      next();
+    } else {
+      activeAsyncGh -= 1;
+    }
+  }
+}
 
 /**
  * @param {string} filePath
@@ -213,13 +289,21 @@ function ghReadEnv(env) {
  * @returns {Promise<string>}
  */
 export async function execGhReadAsync(args, options = {}) {
-  const { stdout } = await execFileAsync("gh", args, {
+  return runGhAsync("gh", args, {
     ...options,
     encoding: "utf8",
     env: ghReadEnv(options.env),
-    maxBuffer: options.maxBuffer ?? PLAIN_GH_MAX_BUFFER_BYTES,
   });
-  return stdout;
+}
+
+/** Protected-writer counterpart with the same child environment and binary selection. */
+export async function execPlainGhAsync(args, options = {}) {
+  const env = plainGhAuthenticatedEnv(options.env ?? process.env);
+  return runGhAsync(resolvePlainGhBin(env, options.cwd ?? process.cwd()), args, {
+    ...options,
+    encoding: "utf8",
+    env,
+  });
 }
 
 /**

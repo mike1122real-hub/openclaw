@@ -5,13 +5,21 @@ import { isDeepStrictEqual } from "node:util";
 import { isDirectRunUrl } from "../lib/direct-run.mjs";
 import { runBelongsToPullRequest } from "../verify-pr-hosted-gates.mts";
 import { parseGithubResponse } from "./gh-api-preflight.mjs";
-import { execPrGh, execPrGhJson } from "./github.mjs";
+import { execPrGhAsync, execPrGhJsonAsync } from "./github.mjs";
 import {
   qualifyPriorCiCancelledRoots,
   verifyPriorCiCancellation,
 } from "./merge-prior-ci-cancellation.mjs";
-import { verifyPriorCiSecurity } from "./merge-prior-ci-security.mjs";
-import { readMergePolicy, readRequiredMergeChecks } from "./merge-rest.mjs";
+import {
+  verifyPriorCiSecurity,
+  verifyPriorCiSecurityMainSources,
+} from "./merge-prior-ci-security.mjs";
+import {
+  parseMergeRepository,
+  readMergePolicyAsync,
+  readRequiredMergeChecksAsync,
+  withPriorCiObservation,
+} from "./merge-rest.mjs";
 
 const oid = /^[0-9a-f]{40}$/;
 const attemptId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -232,12 +240,24 @@ function priorCiDelta(priorHead, head) {
   return { priorHead, head, deltaSha256: digest(delta), changedPaths };
 }
 
-function readEvidence(path, repository, pr, head) {
+function readEvidence(path, repository, pr, head, immutable) {
   requireEvidence(
     lstatSync(path).isFile() && !lstatSync(path).isSymbolicLink(),
     "evidence must be a regular file",
   );
   const bytes = readFileSync(path);
+  const evidenceSha256 = digest(bytes);
+  if (immutable?.evidence) {
+    const retained = immutable.evidence;
+    requireEvidence(
+      retained.evidenceSha256 === evidenceSha256 &&
+        retained.repository === repository &&
+        retained.pr === pr &&
+        retained.head === head,
+      "immutable proof does not match this evidence and head",
+    );
+    return retained;
+  }
   const value = JSON.parse(bytes);
   requireEvidence(
     value.version === 1 &&
@@ -272,7 +292,7 @@ function readEvidence(path, repository, pr, head) {
     value.deltaSha256 === delta.deltaSha256,
     "prior-to-prepared delta changed; inspect and validate it again",
   );
-  return { ...value, ...delta, evidenceSha256: digest(bytes) };
+  return { ...value, ...delta, evidenceSha256 };
 }
 
 function verifyFailureArtifacts(evidence) {
@@ -314,7 +334,7 @@ function verifyUnchangedEvidence(path, expected) {
   return { evidenceSha256: expected };
 }
 
-async function verifyPreExistingFailure(evidence, run, jobs, checks, main, repositoryId) {
+function qualifyPreExistingFailure(evidence, run, jobs, cancelledRoots) {
   verifyFailureArtifacts(evidence);
   const references = (entry) =>
     nonempty(entry?.reason) &&
@@ -322,7 +342,7 @@ async function verifyPreExistingFailure(evidence, run, jobs, checks, main, repos
     entry.evidence.length > 0 &&
     entry.evidence.every((name) => evidence.artifacts.some((artifact) => artifact.name === name));
   requireEvidence(
-    oid.test(main ?? "") && oid.test(evidence.testedMerge ?? "") && references(evidence.checkout),
+    oid.test(evidence.testedMerge ?? "") && references(evidence.checkout),
     "the tested merge, protected main, and inspected checkout evidence are required",
   );
   const parents = git(["rev-list", "--parents", "-n", "1", evidence.testedMerge])
@@ -343,7 +363,6 @@ async function verifyPreExistingFailure(evidence, run, jobs, checks, main, repos
     oid.test(derivedTree) && testedTree === derivedTree,
     "tested merge tree must match the recorded baseline and exact prepared head",
   );
-  git(["merge-base", "--is-ancestor", evidence.priorHead, main]);
   requireEvidence(
     jobs.length > 0 &&
       new Set(jobs.map((job) => job.id)).size === jobs.length &&
@@ -357,7 +376,133 @@ async function verifyPreExistingFailure(evidence, run, jobs, checks, main, repos
       ),
     "all current-attempt jobs must have complete, matching terminal identities",
   );
+  const gate = jobs.find((job) => job.name === "openclaw/ci-gate");
+  requireEvidence(gate, "selected failed attempt must contain a CI gate");
+  const security = jobs.filter((job) => job.name === "security-fast");
+  requireEvidence(
+    security.length === 1 && security[0].conclusion === "success",
+    "security-fast must pass independently",
+  );
+  const failed = jobs.filter(
+    (job) =>
+      job !== gate &&
+      (["failure", "timed_out"].includes(job.conclusion) || cancelledRoots.has(job.id)),
+  );
+  const attributions = evidence.failures;
+  requireEvidence(
+    Array.isArray(attributions) &&
+      attributions.length > 0 &&
+      attributions.length === failed.length &&
+      new Set(attributions.map((entry) => entry?.jobId)).size === failed.length &&
+      failed.every((job) => attributions.some((entry) => entry.jobId === job.id)),
+    "every failed job must have exactly one independent pre-existing attribution",
+  );
+  const sourcePaths = [...new Set(attributions.flatMap((entry) => entry.sourcePaths ?? []))];
+  requireEvidence(
+    sourcePaths.every(
+      (path) =>
+        nonempty(path) &&
+        !path.startsWith("/") &&
+        !path.includes("\\") &&
+        path.split("/").every((part) => part && part !== "." && part !== ".."),
+    ),
+    "failure source paths must be repository-relative",
+  );
+  const revisions = sourcePaths.flatMap((path) => [
+    `${evidence.priorHead}:${path}`,
+    `${evidence.testedMerge}:${path}`,
+  ]);
+  // rev-parse accepts several revisions without --verify; each output must be an OID.
+  const resolved = git(["rev-parse", ...revisions])
+    .toString("utf8")
+    .trim()
+    .split("\n");
+  requireEvidence(
+    resolved.length === revisions.length && resolved.every((value) => oid.test(value)),
+    "failed input objects are unavailable",
+  );
+  const sourceObjectsByPath = new Map(
+    sourcePaths.map((path, index) => {
+      requireEvidence(
+        resolved[index * 2] === resolved[index * 2 + 1],
+        `failed input changed in the tested PR merge: ${path}`,
+      );
+      return [path, { path, oid: resolved[index * 2] }];
+    }),
+  );
+  const failures = attributions.map((entry) => {
+    requireEvidence(
+      references(entry) &&
+        Array.isArray(entry.cases) &&
+        entry.cases.length > 0 &&
+        entry.cases.every(nonempty) &&
+        Array.isArray(entry.sourcePaths) &&
+        entry.sourcePaths.length > 0 &&
+        new Set(entry.sourcePaths).size === entry.sourcePaths.length,
+      "each failure requires observed cases, inspected independent qualification, and source inputs",
+    );
+    const sourceObjects = entry.sourcePaths.map((path) => sourceObjectsByPath.get(path));
+    return {
+      jobId: entry.jobId,
+      reason: entry.reason,
+      cases: entry.cases,
+      sourcePaths: entry.sourcePaths,
+      evidence: entry.evidence,
+      sourceObjects,
+    };
+  });
+  const rootIds = failures.map((entry) => entry.jobId).toSorted((a, b) => a - b);
+  const causedByRoots = (entry) =>
+    references(entry) &&
+    Array.isArray(entry.causedBy) &&
+    JSON.stringify(entry.causedBy.toSorted((a, b) => a - b)) === JSON.stringify(rootIds);
+  requireEvidence(
+    evidence.aggregate?.jobId === gate.id && causedByRoots(evidence.aggregate),
+    "the failed CI aggregate needs inspected attribution to the admitted root failures",
+  );
+  const cancellationProof = verifyPriorCiCancellation({
+    evidence,
+    run,
+    jobs,
+    failed,
+    gate,
+    causedByRoots,
+    references,
+    git,
+    requireEvidence,
+  });
+  return { failures, ...cancellationProof };
+}
+
+async function verifyPreExistingFailure(
+  evidence,
+  run,
+  jobs,
+  checks,
+  main,
+  repositoryId,
+  immutable,
+  deferMain,
+) {
+  if (!deferMain) {
+    git(["merge-base", "--is-ancestor", evidence.priorHead, main]);
+  }
   const gates = jobs.filter((job) => job.name === "openclaw/ci-gate");
+  // Completed job data is fixed, but its check-run and annotations remain mutable.
+  const cancelledRoots = await qualifyPriorCiCancelledRoots({
+    evidence,
+    run,
+    jobs,
+    gate: gates[0],
+    git,
+    requireEvidence,
+  });
+  const fixed = (immutable.failure ??= qualifyPreExistingFailure(
+    evidence,
+    run,
+    jobs,
+    cancelledRoots,
+  ));
   const current = checks.filter(
     (check) =>
       check.name === "openclaw/ci-gate" &&
@@ -376,99 +521,10 @@ async function verifyPreExistingFailure(evidence, run, jobs, checks, main, repos
         `https://api.github.com/repos/${evidence.repository}/check-runs/${current[0].checkRunId}`,
     "selected failed attempt must own the currently effective CI gate check-run",
   );
-  const security = jobs.filter((job) => job.name === "security-fast");
-  requireEvidence(
-    security.length === 1 && security[0].conclusion === "success",
-    "security-fast must pass independently",
-  );
   const combined = checks.filter(
     (check) => check.name === "openclaw/ci-gate" && positiveInteger(check.statusId),
   );
   requireEvidence(combined.length === 1, "current combined CI/security status is required");
-  const cancelledRoots = qualifyPriorCiCancelledRoots({
-    evidence,
-    run,
-    jobs,
-    gate: gates[0],
-    git,
-    requireEvidence,
-  });
-  const failed = jobs.filter(
-    (job) =>
-      job !== gates[0] &&
-      (["failure", "timed_out"].includes(job.conclusion) || cancelledRoots.has(job.id)),
-  );
-  const attributions = evidence.failures;
-  requireEvidence(
-    Array.isArray(attributions) &&
-      attributions.length > 0 &&
-      attributions.length === failed.length &&
-      new Set(attributions.map((entry) => entry?.jobId)).size === failed.length &&
-      failed.every((job) => attributions.some((entry) => entry.jobId === job.id)),
-    "every failed job must have exactly one independent pre-existing attribution",
-  );
-  const failures = attributions.map((entry) => {
-    requireEvidence(
-      references(entry) &&
-        Array.isArray(entry.cases) &&
-        entry.cases.length > 0 &&
-        entry.cases.every(nonempty) &&
-        Array.isArray(entry.sourcePaths) &&
-        entry.sourcePaths.length > 0 &&
-        new Set(entry.sourcePaths).size === entry.sourcePaths.length,
-      "each failure requires observed cases, inspected independent qualification, and source inputs",
-    );
-    const sourceObjects = entry.sourcePaths.map((path) => {
-      requireEvidence(
-        nonempty(path) &&
-          !path.startsWith("/") &&
-          !path.includes("\\") &&
-          path.split("/").every((part) => part && part !== "." && part !== ".."),
-        "failure source paths must be repository-relative",
-      );
-      const baseline = git(["rev-parse", `${evidence.priorHead}:${path}`])
-        .toString("utf8")
-        .trim();
-      const tested = git(["rev-parse", `${evidence.testedMerge}:${path}`])
-        .toString("utf8")
-        .trim();
-      requireEvidence(
-        oid.test(baseline) && baseline === tested,
-        `failed input changed in the tested PR merge: ${path}`,
-      );
-      return { path, oid: baseline };
-    });
-    return {
-      jobId: entry.jobId,
-      reason: entry.reason,
-      cases: entry.cases,
-      sourcePaths: entry.sourcePaths,
-      evidence: entry.evidence,
-      sourceObjects,
-      deadline: cancelledRoots.get(entry.jobId)?.deadline,
-      failedStep: cancelledRoots.get(entry.jobId)?.failedStep,
-    };
-  });
-  const rootIds = failures.map((entry) => entry.jobId).toSorted((a, b) => a - b);
-  const causedByRoots = (entry) =>
-    references(entry) &&
-    Array.isArray(entry.causedBy) &&
-    JSON.stringify(entry.causedBy.toSorted((a, b) => a - b)) === JSON.stringify(rootIds);
-  requireEvidence(
-    evidence.aggregate?.jobId === gates[0].id && causedByRoots(evidence.aggregate),
-    "the failed CI aggregate needs inspected attribution to the admitted root failures",
-  );
-  const cancellationProof = verifyPriorCiCancellation({
-    evidence,
-    run,
-    jobs,
-    failed,
-    gate: gates[0],
-    causedByRoots,
-    references,
-    git,
-    requireEvidence,
-  });
   const securityReview = await verifyPriorCiSecurity({
     repository: evidence.repository,
     repositoryId,
@@ -487,8 +543,13 @@ async function verifyPreExistingFailure(evidence, run, jobs, checks, main, repos
     "pre-existing CI authority does not waive other required checks, including security",
   );
   return {
-    failures,
-    ...cancellationProof,
+    ...fixed,
+    failures: fixed.failures.map((failure) =>
+      Object.assign({}, failure, {
+        deadline: cancelledRoots.get(failure.jobId)?.deadline,
+        failedStep: cancelledRoots.get(failure.jobId)?.failedStep,
+      }),
+    ),
     gateCheckRunId: current[0].checkRunId,
     securityReview,
   };
@@ -581,8 +642,79 @@ export function verifyPriorCiWriterAuthority({
   };
 }
 
-async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, main }) {
-  const evidence = readEvidence(evidencePath, repository, pr, head);
+// Drain every read before reporting the first failure; operation locks must not
+// outlive unjoined GitHub children. The shared transport caps the actual fan-out.
+async function readAll(reads) {
+  const results = await Promise.allSettled(reads);
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure) {
+    throw failure.reason;
+  }
+  return results.map((result) => result.value);
+}
+
+async function readWriterAuthority(repository, actor, evidence, policy, read) {
+  const endpoints = [
+    `repos/${repository}`,
+    `orgs/${repository.split("/")[0]}/memberships/${encodeURIComponent(actor)}`,
+  ];
+  const values = new Map();
+  (await readAll(endpoints.map(read))).forEach((value, index) =>
+    values.set(endpoints[index], value),
+  );
+  const authority = values.get(endpoints[0]);
+  const membership = values.get(endpoints[1]);
+  if (
+    preExisting(evidence) &&
+    authority?.permissions?.push === true &&
+    !(authority.permissions.admin === true && membership?.role === "admin")
+  ) {
+    const ids = [
+      ...new Set(
+        policy.rules
+          .filter(
+            (rule) =>
+              rule.type === "required_status_checks" &&
+              rule.parameters?.required_status_checks?.some(
+                (check) => check.context === "openclaw/ci-gate",
+              ),
+          )
+          .map((rule) => rule.ruleset_id),
+      ),
+    ];
+    requireEvidence(ids.every(positiveInteger), "delegated CI ruleset identity is unavailable");
+    const paths = ids.map((id) => `repos/${repository}/rulesets/${id}`);
+    (await readAll(paths.map(read))).forEach((value, index) => values.set(paths[index], value));
+  }
+  return verifyPriorCiWriterAuthority({
+    repository,
+    actor,
+    changeKind: evidence.changeKind,
+    policy,
+    writerRead: (endpoint) => {
+      requireEvidence(values.has(endpoint), "writer authority snapshot is incomplete");
+      return values.get(endpoint);
+    },
+  });
+}
+
+async function verifyPriorCiAdmin({
+  evidencePath,
+  repository,
+  pr,
+  head,
+  actor,
+  main,
+  immutable = {},
+  sharedSnapshot,
+  deferFinalAuthority = false,
+}) {
+  const evidence = readEvidence(evidencePath, repository, pr, head, immutable);
+  immutable.evidence = evidence;
+  const observedMain = sharedSnapshot?.main ?? main;
+  if (sharedSnapshot) {
+    requireEvidence(sharedSnapshot.head === head, "qualified snapshot changed the prepared head");
+  }
   const repo = {
     nameWithOwner: repository,
     host: "github.com",
@@ -598,22 +730,15 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
     ...(paginate ? ["--paginate", "--slurp"] : []),
   ];
   const read = (endpoint, paginate = false) =>
-    execPrGhJson(apiArgs(endpoint, paginate), {}, "plain");
-  const writerRead = (endpoint) => {
+    execPrGhJsonAsync(apiArgs(endpoint, paginate), {}, "plain");
+  const writerRead = async (endpoint) => {
     const response = parseGithubResponse(
-      execPrGh([...apiArgs(endpoint), "--include"], { encoding: "utf8" }, "plain"),
+      await execPrGhAsync([...apiArgs(endpoint), "--include"], { encoding: "utf8" }, "plain"),
     );
     requireEvidence(response.status === "200", "writer authority is unavailable");
     return response.body;
   };
-  const policy = readMergePolicy(repo);
-  const { authority, delegation } = verifyPriorCiWriterAuthority({
-    repository,
-    actor,
-    changeKind: evidence.changeKind,
-    policy,
-    writerRead,
-  });
+  const policy = sharedSnapshot?.policy ?? (await readMergePolicyAsync(repo));
   const reviewRules = policy.rules.filter((rule) => rule.type === "pull_request");
   let requireReviews = false;
   let requireThreads = false;
@@ -636,29 +761,48 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
   }
   const query =
     "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviewDecision reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}";
-  const reviewResponse = parseGithubResponse(
-    execPrGh(
-      [
-        "api",
-        "graphql",
-        "--hostname",
-        repo.host,
-        "--include",
-        "-H",
-        "Cache-Control: max-age=0",
-        "-f",
-        `owner=${repository.split("/")[0]}`,
-        "-f",
-        `name=${repository.split("/")[1]}`,
-        "-F",
-        `number=${pr}`,
-        "-f",
-        `query=${query}`,
-      ],
-      { encoding: "utf8" },
-      "plain",
-    ),
+  const authorityRead = readWriterAuthority(repository, actor, evidence, policy, writerRead);
+  const reviewRead = execPrGhAsync(
+    [
+      "api",
+      "graphql",
+      "--hostname",
+      repo.host,
+      "--include",
+      "-H",
+      "Cache-Control: max-age=0",
+      "-f",
+      `owner=${repository.split("/")[0]}`,
+      "-f",
+      `name=${repository.split("/")[1]}`,
+      "-F",
+      `number=${pr}`,
+      "-f",
+      `query=${query}`,
+    ],
+    { encoding: "utf8" },
+    "plain",
   );
+  const [writer, reviewRaw, run, latest, pages] = await readAll([
+    authorityRead,
+    reviewRead,
+    read(`repos/${repository}/actions/runs/${evidence.runId}/attempts/${evidence.runAttempt}`),
+    preExisting(evidence) ? read(`repos/${repository}/actions/runs/${evidence.runId}`) : null,
+    immutable.jobs
+      ? [{ jobs: immutable.jobs, total_count: immutable.jobs.length }]
+      : read(
+          `repos/${repository}/actions/runs/${evidence.runId}/attempts/${evidence.runAttempt}/jobs?per_page=100`,
+          true,
+        ),
+  ]);
+  const { authority, delegation } = writer;
+  if (sharedSnapshot) {
+    requireEvidence(
+      sharedSnapshot.repositoryId === authority.id,
+      "qualified snapshot changed the repository identity",
+    );
+  }
+  const reviewResponse = parseGithubResponse(reviewRaw);
   const review = reviewResponse.body?.data?.repository?.pullRequest;
   requireEvidence(
     reviewResponse.status === "200" &&
@@ -675,9 +819,6 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
       "required review threads must all be resolved (more than 100 threads require ordinary landing)",
     );
   }
-  const run = read(
-    `repos/${repository}/actions/runs/${evidence.runId}/attempts/${evidence.runAttempt}`,
-  );
   const runHead = preExisting(evidence) ? head : evidence.priorHead;
   let samePullRequest =
     Array.isArray(run?.pull_requests) &&
@@ -692,7 +833,7 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
     Array.isArray(run.pull_requests) &&
     run.pull_requests.length === 0
   ) {
-    const pull = writerRead(`repos/${repository}/pulls/${pr}`);
+    const pull = await writerRead(`repos/${repository}/pulls/${pr}`);
     samePullRequest =
       pull?.number === pr &&
       pull.head?.sha === head &&
@@ -705,7 +846,7 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
     runAssociation = "exact-source-and-current-check";
   }
   if (run?.event === "workflow_dispatch") {
-    const pull = writerRead(`repos/${repository}/pulls/${pr}`);
+    const pull = await writerRead(`repos/${repository}/pulls/${pr}`);
     let ancestor = false;
     try {
       execFileSync(
@@ -743,7 +884,6 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
     "selected CI attempt must have the expected conclusion and belong to this PR and tested head",
   );
   if (preExisting(evidence)) {
-    const latest = read(`repos/${repository}/actions/runs/${evidence.runId}`);
     requireEvidence(
       latest?.id === run.id &&
         latest.run_attempt === run.run_attempt &&
@@ -753,10 +893,6 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
       "a newer or running CI attempt invalidates pre-existing failure evidence",
     );
   }
-  const pages = read(
-    `repos/${repository}/actions/runs/${evidence.runId}/attempts/${evidence.runAttempt}/jobs?per_page=100`,
-    true,
-  );
   requireEvidence(
     Array.isArray(pages) &&
       pages.length > 0 &&
@@ -766,6 +902,7 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
     "prior CI job evidence is incomplete",
   );
   const jobs = pages.flatMap((page) => page.jobs);
+  immutable.jobs = jobs;
   const gate = jobs.filter((job) => job.name === "openclaw/ci-gate");
   if (!preExisting(evidence)) {
     requireEvidence(
@@ -777,11 +914,22 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
       "selected prior attempt must contain a successful CI gate for its exact head",
     );
   }
-  const checks = readRequiredMergeChecks(repo, head, policy, {
-    includeCheckIdentity: preExisting(evidence),
-  });
+  const checks =
+    sharedSnapshot?.checks ??
+    (await readRequiredMergeChecksAsync(repo, head, policy, {
+      includeCheckIdentity: preExisting(evidence),
+    }));
   const failureProof = preExisting(evidence)
-    ? await verifyPreExistingFailure(evidence, run, jobs, checks, main, authority.id)
+    ? await verifyPreExistingFailure(
+        evidence,
+        run,
+        jobs,
+        checks,
+        observedMain,
+        authority.id,
+        immutable,
+        Boolean(sharedSnapshot),
+      )
     : undefined;
   if (!preExisting(evidence)) {
     requireEvidence(
@@ -795,38 +943,60 @@ async function verifyPriorCiAdmin({ evidencePath, repository, pr, head, actor, m
       "only pending/skipped normal CI may be waived; failed CI and other checks, including security, remain blocking",
     );
   }
-  if (delegation) {
-    // CI/security inspection can await external work. Re-read the effective policy
-    // and the writer grant afterward; the retained proof also fences later admission rounds.
-    const currentPolicy = readMergePolicy(repo);
-    const current = verifyPriorCiWriterAuthority({
-      repository,
-      actor,
-      changeKind: evidence.changeKind,
-      policy: currentPolicy,
-      writerRead,
-    });
+  const complete = async (observedPolicy) => {
+    const finalPolicy = observedPolicy ?? (await readMergePolicyAsync(repo));
+    // The snapshot owner invokes this after its final main observation. Grants
+    // remain fresh even when all of the historical proof was reused.
+    const current = await readWriterAuthority(repository, actor, evidence, finalPolicy, writerRead);
     requireEvidence(
-      isDeepStrictEqual(currentPolicy, policy) && isDeepStrictEqual(current.delegation, delegation),
-      "delegated CI-only ruleset bypass changed during admission",
+      isDeepStrictEqual(finalPolicy, policy) && isDeepStrictEqual(current.delegation, delegation),
+      "writer policy or delegated bypass changed during admission",
     );
+    requireEvidence(
+      digest(readFileSync(evidencePath)) === evidence.evidenceSha256,
+      "operator evidence changed while reading authority",
+    );
+    return {
+      ...evidence,
+      ...failureProof,
+      ...(preExisting(evidence) ? { runAssociation } : {}),
+      delegation,
+      actor,
+      dispatchTransport: "rest",
+      ciUrl: `${repo.url}/actions/runs/${evidence.runId}/attempts/${evidence.runAttempt}`,
+      policySha256: digest(JSON.stringify(policy)),
+    };
+  };
+  return deferFinalAuthority ? { complete } : complete();
+}
+
+async function verifyMode(mode, options) {
+  if (mode === "verify") {
+    return verifyPriorCiAdmin(options);
   }
+  // This cache is carried only over stdin by the uninterrupted lock-owning
+  // shell invocation, never loaded from mutable preparation files or env.
+  const input = readFileSync(0, "utf8").trim();
+  const immutable = input ? JSON.parse(input) : {};
+  if (mode === "verify-cached") {
+    const proof = await verifyPriorCiAdmin({ ...options, immutable });
+    return { proof, immutable };
+  }
+  const repo = parseMergeRepository(options.repositoryIdentity);
   requireEvidence(
-    digest(readFileSync(evidencePath)) === evidence.evidenceSha256,
-    "operator evidence changed while reading authority",
+    repo.nameWithOwner === options.repository,
+    "qualified repository identity differs",
   );
-  if (preExisting(evidence)) {
-    verifyFailureArtifacts(evidence);
-  }
+  const result = await withPriorCiObservation(repo, options.pr, {
+    prepare: (sharedSnapshot) =>
+      verifyPriorCiAdmin({ ...options, immutable, sharedSnapshot, deferFinalAuthority: true }),
+    finish: (prepared, snapshot) => prepared.complete(snapshot.policy),
+  });
   return {
-    ...evidence,
-    ...failureProof,
-    ...(preExisting(evidence) ? { runAssociation } : {}),
-    delegation,
-    actor,
-    dispatchTransport: "rest",
-    ciUrl: `${repo.url}/actions/runs/${evidence.runId}/attempts/${evidence.runAttempt}`,
-    policySha256: digest(JSON.stringify(policy)),
+    proof: result.value,
+    observation: result.observation,
+    qualifiedMain: result.qualifiedMain,
+    immutable,
   };
 }
 
@@ -834,28 +1004,34 @@ if (isDirectRunUrl(process.argv[1], import.meta.url)) {
   try {
     const [mode, ...args] = process.argv.slice(2);
     const result =
-      mode === "delta"
-        ? priorCiDelta(...args)
-        : mode === "unchanged"
-          ? verifyUnchangedEvidence(...args)
-          : mode === "provider-rejection"
-            ? qualifyProviderRejection(readFileSync(0, "utf8"), ...args)
-            : mode === "stale-head-retirement"
-              ? qualifyStaleHeadRetirement(readFileSync(0, "utf8"), ...args)
-              : mode === "verify"
-                ? await verifyPriorCiAdmin({
-                    evidencePath: args[0],
-                    repository: args[1],
-                    pr: Number(args[2]),
-                    head: args[3],
-                    actor: args[4],
-                    main: args[5],
-                  })
-                : (() => {
-                    throw new Error(
-                      "Expected delta <prior-head> <head>, unchanged <evidence> <sha256>, provider-rejection <.local|git:outcome> (record JSON on stdin), stale-head-retirement <outcome> <replacement-head> <.local|git:successor> (record JSON on stdin), or verify <evidence> <repo> <PR> <head> <actor> [main]",
-                    );
-                  })();
+      mode === "verify-main-sources"
+        ? verifyPriorCiSecurityMainSources(
+            JSON.parse(readFileSync(0, "utf8")).securityReview,
+            args[0],
+          )
+        : mode === "delta"
+          ? priorCiDelta(...args)
+          : mode === "unchanged"
+            ? verifyUnchangedEvidence(...args)
+            : mode === "provider-rejection"
+              ? qualifyProviderRejection(readFileSync(0, "utf8"), ...args)
+              : mode === "stale-head-retirement"
+                ? qualifyStaleHeadRetirement(readFileSync(0, "utf8"), ...args)
+                : mode === "verify" || mode === "verify-cached" || mode === "qualify"
+                  ? await verifyMode(mode, {
+                      evidencePath: args[0],
+                      repository: args[1],
+                      pr: Number(args[2]),
+                      head: args[3],
+                      actor: args[4],
+                      main: args[5],
+                      repositoryIdentity: args[6],
+                    })
+                  : (() => {
+                      throw new Error(
+                        "Expected delta <prior-head> <head>, unchanged <evidence> <sha256>, provider-rejection <.local|git:outcome> (record JSON on stdin), stale-head-retirement <outcome> <replacement-head> <.local|git:successor> (record JSON on stdin), or verify <evidence> <repo> <PR> <head> <actor> [main]",
+                      );
+                    })();
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

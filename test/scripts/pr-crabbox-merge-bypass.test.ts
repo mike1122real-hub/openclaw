@@ -587,6 +587,7 @@ else if (endpoint === "graphql" && args.some(arg => arg.includes("repository(own
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
     chmodSync(join(bin, name), 0o755);
   }
+  writeFileSync(join(root, "clock"), "0\n");
   try {
     const result = spawnSync(
       "bash",
@@ -602,7 +603,8 @@ else if (endpoint === "graphql" && args.some(arg => arg.includes("repository(own
           'source "$script_parent_dir/pr-lib/gates.sh"',
           'source "$script_parent_dir/pr-lib/merge.sh"',
           'source "$script_parent_dir/pr-lib/review.sh"',
-          'sleep() { command node "$FIXTURE_PROTECTED_GH" fixture-sleep "$@"; }',
+          'pr_merge_now() { cat "$FIXTURE_CLOCK"; }',
+          'pr_merge_sleep() { local now; read -r now < "$FIXTURE_CLOCK"; printf "%s\\n" "$((now + $1))" > "$FIXTURE_CLOCK"; command node "$FIXTURE_PROTECTED_GH" fixture-sleep "$@"; }',
           command,
         ].join("\n"),
       ],
@@ -621,6 +623,7 @@ else if (endpoint === "graphql" && args.some(arg => arg.includes("repository(own
           FAKE_REQUALIFICATION: requalification,
           FAKE_REVOKE_DURING: revokeDuringRequalification ? requalification : "",
           FIXTURE_PROTECTED_GH: selected,
+          FIXTURE_CLOCK: join(root, "clock"),
           GATES_MODE: "remote_crabbox_aws",
           REMOTE_GATES_PROVIDER: "aws",
           FULL_GATES_HEAD_SHA: headSha,

@@ -83,10 +83,10 @@ describePosix("prior-CI whole REST observation fallback", () => {
     });
     expect(f.record()).toMatchObject({ phase: "complete", head: f.head });
     expect(f.git(["rev-parse", `${f.record().landed}^1`])).toBe(
-      stage === "continuing main" || stage === "within read" ? final.mainAdvances[0] : main,
+      stage === "continuing main" || stage === "within read" ? final.mainAdvances.at(-1) : main,
     );
     if (recalculating) {
-      expect(final.settlementSleeps).toEqual([1, 1]);
+      expect(final.settlementSleeps).toEqual([2, 2]);
       expect(f.record().main).toBe(f.base);
       expectFinalAuthority(readsBeforeDispatch(f));
     }
@@ -98,7 +98,7 @@ describePosix("prior-CI whole REST observation fallback", () => {
       ).toHaveLength(8);
       expect(
         reads.filter((call) => call.includes("orgs/fixture/memberships/fixture-operator")),
-      ).toHaveLength(2);
+      ).toHaveLength(4);
       expectFinalAuthority(reads);
       expect(f.record()).toMatchObject({
         route: "admin",
@@ -133,6 +133,74 @@ describePosix("prior-CI whole REST observation fallback", () => {
       );
     }
   });
+
+  it("keeps the full authority deadline after UNKNOWN settles and main advances again", () => {
+    const f = unknownGraphqlCandidate();
+    const main = f.commit(f.tree("before\n", "advanced\n"), [f.base]);
+    f.save({
+      ...f.state(),
+      mode: "unapplied",
+      restObservations: [
+        {},
+        {},
+        {},
+        { main, pr: { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" } },
+        { advanceMain: true, pr: { mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED" } },
+        { advanceSeconds: 65 },
+      ],
+    });
+
+    const result = f.adminPriorCi(f.path);
+
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain("prior dispatch unresolved");
+    expect(f.state().settlementSleeps).toEqual([2]);
+    expect(f.state().mainAdvances).toHaveLength(1);
+    expect(result.output).toContain("Admin authority round 3:");
+    expect(f.state()).toMatchObject({
+      mutations: 1,
+      posts: 0,
+      restMergePayload: { sha: f.head, merge_method: "squash" },
+    });
+    expectFinalAuthority(readsBeforeDispatch(f));
+    expect(f.record()).toMatchObject({ phase: "intent", head: f.head, accepted: false });
+  });
+
+  it.each(["revoked approval", "new failing suite", "rewound main"] as const)(
+    "refuses %s after a remote-only main advance",
+    (fault) => {
+      const f = unknownGraphqlCandidate();
+      f.save({
+        ...f.state(),
+        restObservations: [
+          {},
+          {},
+          {},
+          { advanceMain: true },
+          fault === "revoked approval"
+            ? { priorCi: { reviewDecision: "REVIEW_REQUIRED" } }
+            : fault === "new failing suite"
+              ? { restUnseenSuite: "new-gate" }
+              : { main: f.base },
+        ],
+      });
+
+      const result = f.adminPriorCi(f.path);
+
+      expect(result.status, result.output).not.toBe(0);
+      expect(result.output).toContain("Requalifying admin admission");
+      expect(f.state().mainAdvances).toHaveLength(1);
+      expect(f.git(["cat-file", "-t", f.state().mainAdvances[0]!])).toBe("commit");
+      expect(result.output).toContain(
+        fault === "revoked approval"
+          ? "current enforced reviews must be satisfied"
+          : fault === "new failing suite"
+            ? "currently effective CI gate"
+            : "both observed and verified main",
+      );
+      expectNoDispatch(f);
+    },
+  );
 
   it("refuses a missing merged receipt during active prior-CI admission", () => {
     const f = unknownGraphqlCandidate();
@@ -285,14 +353,19 @@ describePosix("prior-CI whole REST observation fallback", () => {
       expect(result.status, result.output).not.toBe(0);
       expect(result.output).toContain(
         fault === "persistent"
-          ? "mergeability recalculation remained UNKNOWN after 3 observations"
+          ? "mergeability recalculation"
           : fault === "rewind" || fault === "divergence"
             ? "both observed and verified main"
             : "PR or main changed during observation",
       );
-      expect(f.state().settlementSleeps).toEqual(
-        advanced || fault === "same main" ? [1] : fault === "persistent" ? [1, 1, 2] : [1, 1],
-      );
+      if (fault === "persistent") {
+        expect(result.output).toContain("60s");
+        expect(f.state().settlementSleeps.every((delay) => delay <= 8)).toBe(true);
+      } else {
+        expect(f.state().settlementSleeps).toEqual(
+          advanced || fault === "same main" ? [2] : [2, 2],
+        );
+      }
       expectNoDispatch(f);
     },
   );

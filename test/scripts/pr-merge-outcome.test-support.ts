@@ -204,6 +204,8 @@ export function createMergeOutcomeFixtureHarness() {
         gates?: string;
         restPolicy?: string;
         priorCi?: Partial<ReturnType<typeof createPriorCiFixtureState>>;
+        restUnseenSuite?: string;
+        advanceSeconds?: number;
         afterRestMainReads?: number;
         afterPolicyRead?: boolean;
       },
@@ -213,6 +215,8 @@ export function createMergeOutcomeFixtureHarness() {
         advanceMain?: boolean;
         pr?: Record<string, unknown>;
         priorCi?: Partial<ReturnType<typeof createPriorCiFixtureState>>;
+        restUnseenSuite?: string;
+        advanceSeconds?: number;
       }>,
       restMergePayload: null as null | {
         sha: string;
@@ -238,9 +242,12 @@ export function createMergeOutcomeFixtureHarness() {
         mergeStateStatus?: string;
       },
       settlementSleeps: [] as number[],
+      clockStep: 0,
       observations: [] as Array<{
         pr?: Record<string, unknown>;
         priorCi?: Partial<ReturnType<typeof createPriorCiFixtureState>>;
+        restUnseenSuite?: string;
+        advanceSeconds?: number;
         main?: string;
         invalid?: boolean;
         unavailable?: boolean;
@@ -295,6 +302,8 @@ export function createMergeOutcomeFixtureHarness() {
       operator: "fixture-operator",
     };
     const statePath = join(root, "server.json");
+    const clockPath = join(root, "clock");
+    writeFileSync(clockPath, "0\n");
     const save = (state: typeof initial) => {
       writeFileSync(statePath, JSON.stringify(state));
       if (!state.review) {
@@ -404,24 +413,28 @@ const restCheckSuites=()=>{
   if(s.restUnseenSuite&&s.restUnseenSuite!=="partial-pending") {
     const empty=s.restUnseenSuite.startsWith("queued-empty");
     const pending=empty||["pending","other-app"].includes(s.restUnseenSuite);
-    const failed=["failed","irrelevant-failure"].includes(s.restUnseenSuite);
+    const failed=["failed","irrelevant-failure","new-gate"].includes(s.restUnseenSuite);
     for(const id of Array.from({length:s.restUnseenSuiteCount||(s.restUnseenSuite==="labeler"?2:1)},(_,index)=>30+index)) suites.push({id,head_sha:s.pr.headRefOid,
       app:{id:s.restUnseenSuite==="other-app"?999:s.restCheckApp,slug:s.restUnseenSuite==="other-app"?"another-app":s.restCheckApp===15368?"github-actions":"custom-ci"},
       status:empty?"queued":pending?"in_progress":"completed",conclusion:pending?null:failed?"failure":"skipped",
       updated_at:s.restUnseenSuite==="missing-version"?undefined:"2026-09-20T00:01:00Z",
-      latest_check_runs_count:s.restUnseenSuite==="missing-count"?undefined:empty?0:["failed","hidden-skipped"].includes(s.restUnseenSuite)?1:3});
+      latest_check_runs_count:s.restUnseenSuite==="missing-count"?undefined:empty?0:["failed","hidden-skipped","new-gate"].includes(s.restUnseenSuite)?1:3});
   }
   return suites;
 };
 const suiteChecks=(suite)=>{
   const id=suite.id;
-  const names=s.restUnseenSuite.startsWith("queued-empty")?[]:["failed","hidden-skipped"].includes(s.restUnseenSuite)?["CI"]:["label","label-issues","backfill-pr-labels"];
+  const names=s.restUnseenSuite.startsWith("queued-empty")?[]:s.restUnseenSuite==="new-gate"?[s.requiredCheckName]:["failed","hidden-skipped"].includes(s.restUnseenSuite)?["CI"]:["label","label-issues","backfill-pr-labels"];
   return names.map((name,index)=>({id:id*100+index,head_sha:s.pr.headRefOid,name,app:suite.app,check_suite:{id},
-    status:"completed",conclusion:suite.conclusion,started_at:"2026-09-20T00:00:00Z"}));
+    status:"completed",conclusion:suite.conclusion,started_at:s.restUnseenSuite==="new-gate"?"2026-09-20T00:01:00Z":"2026-09-20T00:00:00Z"}));
 };
 const currentSuite=(suite)=>suite.id<30?suite:s.restUnseenSuite==="changed-suite"?{...suite,updated_at:"2026-09-20T00:02:00Z"}:
   ["changed-count","queued-empty-drift"].includes(s.restUnseenSuite)?{...suite,latest_check_runs_count:4}:suite;
 const paginated=(values,key,total=values.length)=>Array.from({length:Math.max(1,Math.ceil(values.length/100))},(_,index)=>({total_count:total,[key]:values.slice(index*100,index*100+100)}));
+const advanceClock=(seconds)=>{
+  const clock=process.env.FIXTURE_CLOCK;
+  fs.writeFileSync(clock,String(Number(fs.readFileSync(clock,"utf8"))+seconds)+"\\n");
+};
 const advanceMain=()=>{
   const parent=main();
   const next=git(["--git-dir="+process.env.FIXTURE_REMOTE,"commit-tree",git(["--git-dir="+process.env.FIXTURE_REMOTE,"rev-parse",parent+"^{tree}"]),"-p",parent],"Remote advance\\n");
@@ -435,6 +448,8 @@ const applyRestObservation=(next=s.restObservation)=>{
   if(next.gates) s.gates=next.gates;
   if(next.restPolicy) s.restPolicy=next.restPolicy;
   if(next.priorCi) Object.assign(s.priorCi,next.priorCi);
+  if(next.restUnseenSuite) s.restUnseenSuite=next.restUnseenSuite;
+  if(next.advanceSeconds) advanceClock(next.advanceSeconds);
   s.restObservationAppliedAt=s.restMainReads;s.restObservation=null;save();
 };
 ${priorCiSecurityFixtureSource}
@@ -733,6 +748,8 @@ else if(args[0]==="pr"&&args[1]==="view") {
     const step=s.observations.shift();
     if(step?.pr) Object.assign(s.pr,step.pr);
     if(step?.priorCi) Object.assign(s.priorCi,step.priorCi);
+    if(step?.restUnseenSuite) s.restUnseenSuite=step.restUnseenSuite;
+    if(step?.advanceSeconds) advanceClock(step.advanceSeconds);
     if(step?.main) git(["push","-q","--force","origin",step.main+":refs/heads/main"]);
     if(step?.advanceMain) advanceMain();
     if(step?.unavailable) fail("metadata unavailable");
@@ -804,8 +821,17 @@ pr_gh_plain() {
     command node "$FIXTURE_GH" direct "$@"
   fi
 }
-# Skip only admission settlement delays; preserve the operation lock's short sleeps.
-sleep() { if [ "$#" = 1 ] && { [ "$1" = 1 ] || [ "$1" = 2 ]; }; then command node "$FIXTURE_GH" sleep "$1"; else command sleep "$@"; fi; }
+# Advance only the admission clock; operation lock timing stays native.
+pr_merge_now() {
+  local now; IFS= read -r now < "$FIXTURE_CLOCK"
+  printf '%s\\n' "$now"
+  printf '%s\\n' "$((now + FIXTURE_CLOCK_STEP))" > "$FIXTURE_CLOCK"
+}
+pr_merge_sleep() {
+  local now; IFS= read -r now < "$FIXTURE_CLOCK"
+  printf '%s\\n' "$((now + $1))" > "$FIXTURE_CLOCK"
+  command node "$FIXTURE_GH" sleep "$1"
+}
 verify_crabbox_admin_merge_bypass() {
   [ "$(command jq -r .admin "$FIXTURE_STATE")" = true ] || return 1
   command jq --arg main "$(git --git-dir="$FIXTURE_REMOTE" rev-parse refs/heads/main)" '{mainSha:$main,finalMainSha:$main,crabboxCheckUrl:"fixture",ciGateUrl:"fixture"}' "$FIXTURE_STATE" > .local/merge-crabbox-bypass.json
@@ -882,6 +908,7 @@ fi
       NODE_COMPILE_CACHE: template.compileCache,
       NODE_OPTIONS: `--require ${JSON.stringify(ghPreload)}`,
       FIXTURE_STATE: statePath,
+      FIXTURE_CLOCK: clockPath,
       FIXTURE_ROOT: root,
       FIXTURE_REPO: repo,
       FIXTURE_REMOTE: remote,
@@ -937,6 +964,7 @@ fi
           env: {
             ...env,
             FIXTURE_REAL_GH: String(Boolean(state().quotaAt || state().restReadFailure)),
+            FIXTURE_CLOCK_STEP: String(state().clockStep),
             OPENCLAW_PR_MERGE_METHOD: method,
             OPENCLAW_PR_STRICT_DRIFT: state().strictDrift ? "1" : "",
           },
