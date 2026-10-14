@@ -64,22 +64,24 @@ describe("Reef worker outbound composition", () => {
   afterAll(resetFlowStoresForTests);
 
   function recordDispatches() {
-    const commands: unknown[] = [];
-    // oxlint-disable-next-line typescript/unbound-method -- The spy forwards with call(this) to preserve each worker receiver.
-    const postMessage = Worker.prototype.postMessage;
+    const dispatched: unknown[] = [];
+    // oxlint-disable-next-line typescript/unbound-method -- call supplies the intercepted worker receiver.
+    const nativePost = Worker.prototype.postMessage;
     vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
       this: Worker,
-      message,
+      message: unknown,
       transferList,
     ) {
+      const commands: unknown[] = [];
+      // Decode before the native transfer detaches the sender's command buffer.
       if (isRecord(message) && message.type === "execute" && message.input instanceof Uint8Array) {
-        // The native send transfers the input buffer and detaches it from the sender.
         const command: unknown = deserialize(message.input);
         commands.push(isRecord(command) ? command.type : "invalid command");
       }
-      return postMessage.call(this, message, transferList);
+      nativePost.call(this, message, transferList);
+      dispatched.push(...commands);
     });
-    return () => commands;
+    return () => dispatched;
   }
 
   it("persists proposal, verdict, envelope and exact delivery in two worker commands without host SQL", async () => {

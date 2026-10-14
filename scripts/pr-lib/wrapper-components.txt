@@ -1024,6 +1024,7 @@ src/infra/path-guards.ts
 src/infra/plain-object.ts
 src/infra/ports-lsof.ts
 src/infra/ports-netstat.ts
+src/infra/private-dir-mode.ts
 src/infra/private-directory-creation.ts
 src/infra/private-mode.ts
 src/infra/process-env.ts
@@ -1033,6 +1034,7 @@ src/infra/retry-attempt-errors.ts
 src/infra/retry.ts
 src/infra/root-walk.ts
 src/infra/runtime-process-entrypoints.ts
+src/infra/runtime-process-manifest.ts
 src/infra/runtime-process-url.ts
 src/infra/runtime-worker-generation.ts
 src/infra/runtime-worker-url.ts
@@ -1217,6 +1219,7 @@ src/infra/update-runtime-staging.ts
 src/infra/update-snapshot-capacity-schema.ts
 src/infra/update-step-identity.ts
 src/infra/warning-filter.ts
+src/infra/windows-appcontainer-spawn.ts
 src/infra/windows-encoding.ts
 src/infra/windows-install-roots.ts
 src/infra/windows-port-pids.ts
@@ -1356,6 +1359,7 @@ src/plugins/config-policy.ts
 src/plugins/config-state.ts
 src/plugins/control-plane-workspace.ts
 src/plugins/control-ui-assets.ts
+src/plugins/control-ui-build-manifest.ts
 src/plugins/current-plugin-metadata-snapshot.ts
 src/plugins/current-plugin-metadata-state.ts
 src/plugins/default-enablement.ts

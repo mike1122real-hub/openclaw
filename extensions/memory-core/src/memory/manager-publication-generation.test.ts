@@ -108,6 +108,22 @@ function recordIndexCommands(target: Pick<Worker, "postMessage">) {
   return { commands, restore: () => messages.mockRestore() };
 }
 
+function recordIndexCommands(prototype: Pick<MessagePort, "postMessage">) {
+  const commands: string[] = [];
+  const nativePost = prototype.postMessage;
+  const posts = vi.spyOn(prototype, "postMessage").mockImplementation(function (
+    this: MessagePort | Worker,
+    message: unknown,
+    transferList,
+  ) {
+    // Decode before the native transfer detaches the sender's command buffer.
+    const dispatched = indexCommands([[message]]);
+    nativePost.call(this, message, transferList);
+    commands.push(...dispatched);
+  });
+  return { commands, restore: () => posts.mockRestore() };
+}
+
 it("retains session entry facts across memory publication and refreshes after a session write", async () => {
   await withPublishedIndex(async (database) => {
     const target = {
