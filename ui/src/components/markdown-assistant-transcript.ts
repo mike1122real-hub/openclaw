@@ -43,7 +43,9 @@ function renderAssistantTranscriptRoleImageLabel(
   // The parser emits ordered spans already clipped to this image label.
   for (const { start, end } of spans) {
     rendered += escapeHtml(text.slice(cursor, start));
-    rendered += renderAssistantTranscriptRoleMarker(text.slice(start, end));
+    if (end > start) {
+      rendered += renderAssistantTranscriptRoleMarker(text.slice(start, end));
+    }
     cursor = end;
   }
   return rendered + escapeHtml(text.slice(cursor));
