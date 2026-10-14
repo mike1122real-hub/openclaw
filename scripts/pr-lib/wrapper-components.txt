@@ -1024,6 +1024,7 @@ src/infra/path-guards.ts
 src/infra/plain-object.ts
 src/infra/ports-lsof.ts
 src/infra/ports-netstat.ts
+src/infra/private-dir-mode.ts
 src/infra/private-directory-creation.ts
 src/infra/private-mode.ts
 src/infra/process-env.ts
@@ -1033,6 +1034,7 @@ src/infra/retry-attempt-errors.ts
 src/infra/retry.ts
 src/infra/root-walk.ts
 src/infra/runtime-process-entrypoints.ts
+src/infra/runtime-process-manifest.ts
 src/infra/runtime-process-url.ts
 src/infra/runtime-worker-generation.ts
 src/infra/runtime-worker-url.ts
