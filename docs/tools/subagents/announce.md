@@ -134,7 +134,8 @@ OpenClaw preserves prompt-data escaping and stable order when it delivers severa
 results together. Completion findings target a shared 160,000-character budget,
 including escaping and framing. Small answers stay intact; larger answers keep
 their beginning and an explicit truncation marker pointing to `sessions_history`
-with the child session key. Every child keeps its task and status. An extreme
+with the child session key. History also truncates long text blocks; this pointer
+does not provide lossless retrieval of an omitted tail. Every child keeps its task and status. An extreme
 cohort's required child blocks can exceed the target even with minimal result
 heads. The bounded lifecycle snapshot and retained complete transcript stay
 separate from these prompt limits.

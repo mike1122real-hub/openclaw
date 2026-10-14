@@ -305,7 +305,7 @@ describe("buildChildCompletionFindings", () => {
       expect(findings).toContain(`\nTask ${index}\n</prompt-data>`);
       expect(findings).toContain(`\nResult ${index}: `);
       expect(findings).toContain(
-        `[result truncated; full text: sessions_history sessionKey="${child.childSessionKey}"]`,
+        `[result truncated; history (also bounded): sessions_history sessionKey="${child.childSessionKey}"]`,
       );
     }
     expect(buildChildCompletionFindings(children.toReversed())).toBe(findings);

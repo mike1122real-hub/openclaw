@@ -210,7 +210,7 @@ export function buildChildCompletionFindings(
       child.task.trim() ||
       child.childSessionKey.trim() ||
       `child ${index + 1}`;
-    const displayIndex = sections.length + 1;
+    const displayIndex: number = sections.length + 1;
     const result = { label: "Child result", text: resultText?.trim() || "(no output)" };
     sections.push({
       result,
@@ -243,7 +243,7 @@ export function buildChildCompletionFindings(
   for (const [index, section] of bySize.entries()) {
     const share = Math.floor(remaining / (bySize.length - index));
     if (section.resultBlock.length > share) {
-      const truncationMarker = `[result truncated; full text: sessions_history sessionKey=${JSON.stringify(section.childSessionKey)}]`;
+      const truncationMarker = `[result truncated; history (also bounded): sessions_history sessionKey=${JSON.stringify(section.childSessionKey)}]`;
       // Every child keeps its identity, retrieval pointer and at least one code point,
       // even if an extreme cohort's mandatory roster alone exceeds the batch target.
       const minimum = wrapPromptDataBlock({ ...section.result, text: truncationMarker }).length + 4;
