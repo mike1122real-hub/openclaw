@@ -193,6 +193,24 @@ it("batches worker GC with heap samples and flushes at shutdown", async () => {
       ["scavenge", "sqlite-store.worker.js", 2],
       ["mark_sweep_compact", "sqlite-store.worker.js", 8],
     ]);
+    events.length = 0;
+    messages.length = 0;
+    const flushed = once(telemetry!, "message");
+    const batch = Array.from({ length: 128 }, () => ({
+      startTime: performance.now(),
+      duration: 1,
+    }));
+    workerObserver.deliver(batch);
+    workerObserver.deliver(batch);
+    await flushed;
+    await waitForDiagnosticEventsDrained();
+    expect(messages).toEqual([
+      { gc: Array.from({ length: 256 }, () => ({ kind: "scavenge", durationMs: 1 })) },
+    ]);
+    expect(events).toEqual(
+      Array.from({ length: 256 }, () => ["scavenge", "sqlite-store.worker.js", 1]),
+    );
+    events.length = 0;
     setDiagnosticsEnabledForProcess(false);
     stopDiagnosticGcObserver();
     await fence();
@@ -208,11 +226,7 @@ it("batches worker GC with heap samples and flushes at shutdown", async () => {
     await closed;
     expect(native.observers[3]!.disconnect).toHaveBeenCalled();
     await waitForDiagnosticEventsDrained();
-    expect(events).toEqual([
-      ["scavenge", "sqlite-store.worker.js", 2],
-      ["mark_sweep_compact", "sqlite-store.worker.js", 8],
-      ["scavenge", "sqlite-store.worker.js", 7],
-    ]);
+    expect(events).toEqual([["scavenge", "sqlite-store.worker.js", 7]]);
   } finally {
     close();
     stopDiagnosticGcObserver();
