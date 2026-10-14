@@ -7,16 +7,21 @@ const { fixture, reconciledMergeAfterCleanup, outcomeRef, describePosix, unknown
   createMergeOutcomeFixtureHarness();
 
 describePosix("native merge outcome with real Git and supervised lock recovery", () => {
-  it.each([true, false])(
-    "starts the full settle window after a slow first UNKNOWN read (settles=%s)",
-    (settles) => {
+  it.each([
+    { phase: "initial", settles: true },
+    { phase: "initial", settles: false },
+    { phase: "stability", settles: true },
+    { phase: "stability", settles: false },
+  ])(
+    "starts the full settle window after a slow first UNKNOWN read during $phase (settles=$settles)",
+    ({ phase, settles }) => {
       const f = fixture();
       const main = f.commit(f.tree("before\n", "advanced\n"), [f.base]);
       f.save({
         ...f.state(),
         mode: "unapplied",
         observations: [
-          {},
+          ...(phase === "stability" ? [{}] : []),
           { main, pr: unknownProjection, advanceSeconds: 65 },
           ...(settles
             ? [
@@ -39,7 +44,11 @@ describePosix("native merge outcome with real Git and supervised lock recovery",
         expect(f.record()).toMatchObject({ phase: "intent", head: f.head, accepted: false });
       } else {
         expect(f.state().settlementSleeps.reduce((total, delay) => total + delay, 0)).toBe(60);
-        expect(result.output).toContain("mergeability recalculation remained UNKNOWN");
+        expect(result.output).toContain(
+          phase === "initial"
+            ? "mergeability remained UNKNOWN"
+            : "mergeability recalculation remained UNKNOWN",
+        );
         expect(f.state().mutations).toBe(0);
         expect(f.captures()).toEqual([]);
         expect(() => f.record()).toThrow();
