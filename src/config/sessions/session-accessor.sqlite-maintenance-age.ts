@@ -379,6 +379,12 @@ export function capturePendingSessionMaintenanceAgeChanges(
   const changes = [...pending.values()];
   return {
     changes,
+    isCurrent() {
+      return (
+        pending.size === changes.length &&
+        changes.every((change) => pending.get(change.sessionKey) === change)
+      );
+    },
     acknowledge() {
       for (const change of changes) {
         if (pending.get(change.sessionKey) === change) {

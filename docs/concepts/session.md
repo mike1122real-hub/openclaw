@@ -394,8 +394,9 @@ the scheduled retry delay (one second, then two seconds). Further writes coalesc
 into that retry without postponing it indefinitely. Three
 consecutive invalidations pause automatic retries and log the cause; a new
 entry write can schedule another attempt. `warn` mode skips automatic reclamation.
-An unrelated background write can invalidate a no-op pass's age fact without changing
-session eligibility. That pass also waits for the existing quiet window before replanning.
+Certified transcript backfill and usage-cache writes retain a protected-only no-op result
+while entry-change publications and scoped write receipts remain current. Unknown writes
+still invalidate that result and wait for the existing quiet window before replanning.
 
 `maxEntries` defaults to 5000 unarchived session rows. Archived rows do not consume
 the cap. Existing explicit limits remain unchanged.

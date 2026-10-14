@@ -199,13 +199,14 @@ export type SessionEntryMaintenanceInput = {
   archiveDirectory: string;
   forceMaintenance?: boolean;
   maintenance: ResolvedSessionMaintenanceConfig;
+  preparedAgeFactCurrent?: boolean;
   preservation: SessionMaintenancePreservationSnapshot;
   storePath: string;
 };
 
 export type SessionMaintenanceLiveProtection = Pick<
   SessionEntryMaintenanceInput,
-  "activeSessionKeys" | "preservation"
+  "activeSessionKeys" | "preparedAgeFactCurrent" | "preservation"
 >;
 
 type SessionReclamationPlanBase = {

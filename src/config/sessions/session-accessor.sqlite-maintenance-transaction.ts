@@ -1,4 +1,5 @@
 import { runWithSqliteBusyTimeout } from "../../infra/sqlite-busy-timeout.js";
+import { readSqliteDatabaseScopedWriteToken } from "../../infra/sqlite-database-admission.js";
 import { runSqliteDeferredTransactionSync } from "../../infra/sqlite-transaction.js";
 import { retainOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
 import {
@@ -36,7 +37,6 @@ import {
   applySessionEntryMaintenanceInDatabase,
   prepareSessionEntryMaintenanceInDatabase,
   refreshSessionPlannerStatisticsInDatabase,
-  type SessionEntryMaintenanceApply,
 } from "./session-accessor.sqlite-maintenance-store.js";
 import { SqliteReclamationInputsChangedError } from "./session-accessor.sqlite-reclamation-worker-diagnostics.js";
 
@@ -75,15 +75,23 @@ export function prepareSessionMaintenanceInWorker(
     claim.assertCurrent();
     prepareWorkerAgeFact(database, plan);
     const revision = readSessionEntryCacheValidityToken(database.db);
-    const apply: SessionEntryMaintenanceApply = runSqliteDeferredTransactionSync(
+    const scopeKeys = [...(plan.input.activeSessionKeys ?? [])];
+    const scopedRevision = readSqliteDatabaseScopedWriteToken(database.db, scopeKeys);
+    const prepared = runSqliteDeferredTransactionSync(
       database.db,
       () => {
-        const prepared = prepareSessionEntryMaintenanceInDatabase(
+        const planPreparation = prepareSessionEntryMaintenanceInDatabase(
           database,
           plan.input,
           () => plan.input.preservation,
         );
-        return prepared.kind === "no-op" ? prepared.apply : prepared.captureMutation();
+        return {
+          noOp: planPreparation.kind === "no-op",
+          apply:
+            planPreparation.kind === "no-op"
+              ? planPreparation.apply
+              : planPreparation.captureMutation(),
+        };
       },
       { databaseLabel: database.path, operationLabel: "session.maintenance.plan.read" },
     );
@@ -93,12 +101,15 @@ export function prepareSessionMaintenanceInWorker(
         onArchived?: Parameters<typeof applySessionEntryMaintenanceInDatabase>[3],
       ) {
         claim.assertCurrent();
-        const snapshotCurrent = cacheValidityTokensEqual(
-          revision,
-          readSessionEntryCacheValidityToken(database.db),
-        );
-        const maintenance = apply(current, onArchived);
-        // Unrelated commits can change age/count hints without changing the selected victims.
+        const snapshotCurrent =
+          cacheValidityTokensEqual(revision, readSessionEntryCacheValidityToken(database.db)) ||
+          (prepared.noOp &&
+            plan.input.preparedAgeFactCurrent === true &&
+            scopedRevision !== undefined &&
+            scopedRevision === readSqliteDatabaseScopedWriteToken(database.db, scopeKeys));
+        const maintenance = prepared.apply(current, onArchived);
+        // Host publications cover entry changes; scoped receipts still fence unknown writes.
+        // Certified backfill and usage writes cannot change a protected-only no-op result.
         if (!snapshotCurrent) {
           invalidateSessionEntryMaintenanceAgeFact(current.db);
         }

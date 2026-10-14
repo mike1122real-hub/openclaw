@@ -489,7 +489,6 @@ async function runPendingMaintenance(
   let preservation: Awaited<ReturnType<typeof prepareSessionMaintenancePreservation>> | undefined;
   try {
     owner.execution ??= owner.captureExecution();
-    // Capturing policy needs no writer admission; mutations retain their own live checks.
     const maintenance = resolveOwnerMaintenance(owner);
     if (maintenance.mode === "warn") {
       retireMaintenanceOwner(databasePath, owner);
@@ -564,10 +563,9 @@ async function runPendingMaintenance(
           if ([...owner.activeSessionKeys].some((key) => !activeSessionKeys.includes(key))) {
             throw new SqliteReclamationInputsChangedError("SQLite maintenance active keys changed");
           }
-          const currentPreservation = capturePreservation();
           assertMaintenancePreservationCompatible(
             operation.input.preservation,
-            currentPreservation,
+            capturePreservation(),
             plans,
           );
         } catch (error) {
@@ -579,9 +577,14 @@ async function runPendingMaintenance(
         // Preparation can yield to foreground writes; commit checks only affected protection.
         assertInputsCurrent();
         activeSessionKeys = [...new Set([...activeSessionKeys, ...owner.activeSessionKeys])];
-        operation.input.activeSessionKeys = activeSessionKeys;
-        operation.input.preservation = capturePreservation();
-        return { activeSessionKeys, preservation: operation.input.preservation };
+        return {
+          activeSessionKeys,
+          preservation: capturePreservation(),
+          preparedAgeFactCurrent:
+            owner.generation === generation &&
+            plannedChanges.isCurrent() &&
+            isDeepStrictEqual(maintenance, resolveOwnerMaintenance(owner)),
+        };
       },
       plan: operation,
     });
@@ -642,7 +645,6 @@ async function runPendingMaintenance(
     activeSessionKeys = [];
     if (isCurrent() && owner.generation === generation) {
       assertInputsCurrent();
-      // Reuse only this pass's consumed decision; newer kicks and changes win after settlement.
       nextMaintenanceAt = noFinalization ? verifiedNextAt : await readAge();
       if (owner.ageChanges.size > 0 && !hasCurrentNoCandidates()) {
         planningChanged = true;
@@ -653,8 +655,7 @@ async function runPendingMaintenance(
     }
     owner.rejections = 0;
     if (noFinalization && !owner.ageFact && isCurrent()) {
-      // Unrelated backfills can invalidate the snapshot without publishing entry changes.
-      // Retry unknown age facts through the quiet window, not their already-due deadline.
+      // Unknown writes invalidate age facts; their due deadline must retain the quiet window.
       scheduleMaintenanceAfterWriteQuiet(databasePath, owner);
       return;
     }
