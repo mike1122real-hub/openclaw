@@ -20,7 +20,7 @@ import type { WorkerOperationHandlers } from "../state/worker-operation-registry
 import { rowToRef, selectMcpRefs } from "./mcp-records.js";
 import { readClawMonitorCleanupSnapshotInDatabase } from "./monitor-cleanup-read.kernel.js";
 import { updateClawPackageRefStatusInDatabase } from "./package-status.kernel.js";
-import { mutatePortableHeartbeatInWorker } from "./portable-heartbeat-write.kernel.js";
+import { mutatePortableHeartbeatInWorker } from "./portable-heartbeat-write.worker.js";
 import {
   readClawInstallRecordFromDatabase,
   readClawOrphanWorkspaceInDatabase,

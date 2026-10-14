@@ -7,15 +7,14 @@ import {
   SYSTEM_PRESENCE_CLEAR_LAST_INPUT_TAG,
   SYSTEM_PRESENCE_LEGACY_CLEAR_LAST_INPUT_SECONDS,
 } from "../../../packages/gateway-protocol/src/schema/system-event.js";
-import { memorySessionActorOwners } from "../../config/sessions/session-actor-memory-owner.js";
-import { acquireSessionActorStorage } from "../../config/sessions/session-actor-storage-binding.js";
-import { resolveIncognitoOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.paths.js";
 import type { SessionEventTarget } from "../../auto-reply/reply/session-event-contract.js";
 import { setRuntimeConfigSnapshot } from "../../config/runtime-snapshot.js";
 import {
   loadSessionEntryReadOnly,
   replaceSessionEntry,
 } from "../../config/sessions/session-accessor.sqlite-entry.js";
+import { memorySessionActorOwners } from "../../config/sessions/session-actor-memory-owner.js";
+import { acquireSessionActorStorage } from "../../config/sessions/session-actor-storage-binding.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { makeCronJob } from "../../cron/delivery.test-helpers.js";
 import {
@@ -27,6 +26,7 @@ import {
 } from "../../infra/system-events.js";
 import { listSystemPresence } from "../../infra/system-presence.js";
 import { createDeferredCore } from "../../shared/deferred.js";
+import { resolveIncognitoOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.paths.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,

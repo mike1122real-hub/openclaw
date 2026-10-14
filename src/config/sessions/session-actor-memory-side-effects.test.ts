@@ -3,8 +3,8 @@ import { openContextEngineTurnOutboxWorkerStore } from "../../agents/harness/con
 import { drainContextEngineTurnOutbox } from "../../agents/harness/context-engine-turn-outbox.js";
 import type { ContextEngine } from "../../context-engine/types.js";
 import { recordMessageToolRunOutcome } from "../../infra/message-tool-run-outcome-store.js";
-import { resolveIncognitoOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.paths.js";
 import { appendSessionRuntimeContext } from "../../sessions/runtime-context.js";
+import { resolveIncognitoOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.paths.js";
 import { createSqliteTrajectoryRuntimeSink } from "../../trajectory/runtime-store-writer.js";
 import {
   loadSqliteTrajectoryRuntimeEvents,

@@ -8,11 +8,7 @@ import { normalizeCronJobCreate } from "../cron/normalize.js";
 import { createTrustedCronScheduledToolPolicy } from "../cron/scheduled-tool-policy.js";
 import { applyDefaultCronToolsAllow } from "../cron/tools-allow.js";
 import type { CronJob } from "../cron/types.js";
-import {
-  executeSqliteQuerySync,
-  executeSqliteQueryTakeFirstSync,
-  getNodeSqliteKysely,
-} from "../infra/kysely-sync.js";
+import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import { coerceRequiredSqliteNumber as sqliteNumber } from "../infra/sqlite-number.js";
 import type { DB } from "../state/openclaw-state-db.generated.js";
 import {
@@ -91,6 +87,30 @@ function refToRow(ref: PersistedClawCronRef | PersistedClawHeartbeatRef): CronRe
   };
 }
 
+function readClawCronRows(
+  db: DatabaseSync,
+  agentId: string,
+  selection: { kind: "ordinary" } | { kind: "declaration"; manifestId: string },
+): CronRefRow[] {
+  const query = getNodeSqliteKysely<CronRefDatabase>(db)
+    .selectFrom("claw_cron_refs")
+    .selectAll()
+    .where("agent_id", "=", agentId)
+    .where(
+      "manifest_id",
+      selection.kind === "ordinary" ? "!=" : "=",
+      selection.kind === "ordinary" ? CLAW_PORTABLE_HEARTBEAT_ID : selection.manifestId,
+    )
+    .orderBy("manifest_id")
+    .compile();
+  return (
+    db /* sqlite-allow-raw: execute compiled Kysely with the existing native read error boundary. */
+      .prepare(query.sql)
+      // SAFETY: The compiled predicate binds a string; the canonical schema supplies the row shape.
+      .all(...(query.parameters as SQLInputValue[])) as CronRefRow[]
+  );
+}
+
 function persistPendingRef(
   plan: ClawAddPlan,
   job: ClawCronJob,
@@ -99,17 +119,10 @@ function persistPendingRef(
   const nowMs = options.nowMs ?? Date.now();
   const declarationKey = `claw:${plan.agent.finalId}:${job.id}`;
   const database = openOpenClawStateDatabase(options);
-  const query = getNodeSqliteKysely<CronRefDatabase>(database.db)
-    .selectFrom("claw_cron_refs")
-    .selectAll()
-    .where("agent_id", "=", plan.agent.finalId)
-    .where("manifest_id", "=", job.id)
-    .compile();
-  const existing =
-    database.db /* sqlite-allow-raw: execute compiled Kysely with the existing native read error boundary. */
-      .prepare(query.sql)
-      // SAFETY: Compiled predicates bind strings; the canonical schema supplies the row shape.
-      .get(...(query.parameters as SQLInputValue[])) as CronRefRow | undefined;
+  const existing = readClawCronRows(database.db, plan.agent.finalId, {
+    kind: "declaration",
+    manifestId: job.id,
+  })[0];
   if (existing) {
     const ref = rowToRef(existing);
     if (ref.declarationKey !== declarationKey || JSON.stringify(ref.job) !== JSON.stringify(job)) {
@@ -409,18 +422,7 @@ export function readClawCronRefsInDatabase(
   db: DatabaseSync,
   agentId: string,
 ): PersistedClawCronRef[] {
-  const query = getNodeSqliteKysely<CronRefDatabase>(db)
-    .selectFrom("claw_cron_refs")
-    .selectAll()
-    .where("agent_id", "=", agentId)
-    .where("manifest_id", "!=", CLAW_PORTABLE_HEARTBEAT_ID)
-    .orderBy("manifest_id")
-    .compile();
-  const rows =
-    db /* sqlite-allow-raw: execute compiled Kysely with the existing native read error boundary. */
-      .prepare(query.sql)
-      // SAFETY: The compiled predicate binds a string; the canonical schema supplies the row shape.
-      .all(...(query.parameters as SQLInputValue[])) as CronRefRow[];
+  const rows = readClawCronRows(db, agentId, { kind: "ordinary" });
   return rows.map(rowToRef);
 }
 
@@ -490,14 +492,10 @@ export function readClawHeartbeatRefInDatabase(
   db: DatabaseSync,
   agentId: string,
 ): PersistedClawHeartbeatRef | undefined {
-  const row = executeSqliteQueryTakeFirstSync(
-    db,
-    getNodeSqliteKysely<CronRefDatabase>(db)
-      .selectFrom("claw_cron_refs")
-      .selectAll()
-      .where("agent_id", "=", agentId)
-      .where("manifest_id", "=", CLAW_PORTABLE_HEARTBEAT_ID),
-  );
+  const row = readClawCronRows(db, agentId, {
+    kind: "declaration",
+    manifestId: CLAW_PORTABLE_HEARTBEAT_ID,
+  })[0];
   if (!row) {
     return undefined;
   }
