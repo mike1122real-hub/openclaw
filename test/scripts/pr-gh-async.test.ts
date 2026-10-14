@@ -137,6 +137,7 @@ it("keeps input bytes private until the asynchronous child has closed", async ()
 });
 
 it("joins a failed direct child and refuses queued or later work when output is cut", async () => {
+  vi.useFakeTimers();
   const tasks = Array.from({ length: 5 }, () => execGhReadAsync(["api"], { env, maxBuffer: 3 }));
   const first = requestAt(0);
   const failure = expect(tasks[0]).rejects.toMatchObject({
@@ -146,6 +147,8 @@ it("joins a failed direct child and refuses queued or later work when output is 
   const queued = expect(tasks[4]).rejects.toMatchObject({ code: "OPENCLAW_GH_UNJOINED" });
   first.child.stdout.write("too large");
   expect(first.child.kill).toHaveBeenCalledWith("SIGTERM");
+  expect(first.child.stdout.destroyed).toBe(false);
+  await vi.advanceTimersByTimeAsync(1_000);
   expect(first.child.stdout.destroyed).toBe(true);
   expect(first.child.stderr.destroyed).toBe(true);
   expect(requests).toHaveLength(4);
@@ -160,6 +163,33 @@ it("joins a failed direct child and refuses queued or later work when output is 
     code: "OPENCLAW_GH_UNJOINED",
   });
   expect(requests).toHaveLength(4);
+});
+
+it("allows retry after a timed-out child closes naturally within its drain grace", async () => {
+  vi.useFakeTimers();
+  const task = execPrGhAsync(
+    ["api", "graphql", "--input", "-"],
+    { env: { ...env, OPENCLAW_PR_LOCK_NOTIFY_FD: "3" }, input: "private bytes", timeout: 100 },
+    "plain",
+  );
+  const failure = task.catch((error: unknown) => error);
+  const request = requestAt(0);
+  const inputPath = request.args[request.args.indexOf("--input") + 1]!;
+  await vi.advanceTimersByTimeAsync(100);
+  expect(request.child.kill).toHaveBeenCalledWith("SIGTERM");
+  expect(request.child.stdout.destroyed).toBe(false);
+  expect(request.options.stdio).toEqual(["ignore", "pipe", "pipe", 3]);
+  complete(request, 1);
+  const error = await failure;
+  expect(error).toMatchObject({ code: "ETIMEDOUT" });
+  expect(error).not.toHaveProperty("processTreeState");
+  expect(existsSync(inputPath)).toBe(false);
+
+  const retry = execGhReadAsync(["api"], { env });
+  expect(requests).toHaveLength(2);
+  complete(requestAt(1));
+  await expect(retry).resolves.toBe("ok");
+  await vi.advanceTimersByTimeAsync(1_000);
 });
 
 it("enforces timeout across inherited output while preserving notifier and private input", async () => {
@@ -181,6 +211,8 @@ it("enforces timeout across inherited output while preserving notifier and priva
   });
   request.child.emit("exit", 0, null);
   await vi.advanceTimersByTimeAsync(100);
+  expect(request.child.stdout.destroyed).toBe(false);
+  await vi.advanceTimersByTimeAsync(1_000);
   expect(request.child.stdout.destroyed).toBe(true);
   expect(request.child.stderr.destroyed).toBe(true);
   expect(request.options.stdio).toEqual(["ignore", "pipe", "pipe", 3]);
@@ -192,14 +224,16 @@ it("enforces timeout across inherited output while preserving notifier and priva
 });
 
 it("refuses a granted waiter when another child fails before the waiter can spawn", async () => {
+  vi.useFakeTimers();
   const tasks = Array.from({ length: 5 }, () => execGhReadAsync(["api"], { env, maxBuffer: 3 }));
   const failed = expect(tasks[1]).rejects.toMatchObject({
     code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
   });
   const queued = expect(tasks[4]).rejects.toMatchObject({ code: "OPENCLAW_GH_UNJOINED" });
+  requestAt(1).child.stdout.write("too large");
   complete(requestAt(0));
   await Promise.resolve();
-  requestAt(1).child.stdout.write("too large");
+  vi.advanceTimersByTime(1_000);
   requestAt(1).child.emit("close", null, "SIGTERM");
   await Promise.all([failed, queued]);
   expect(requests).toHaveLength(4);

@@ -208,6 +208,7 @@ export function createMergeOutcomeFixtureHarness() {
         advanceSeconds?: number;
         afterRestMainReads?: number;
         afterPolicyRead?: boolean;
+        afterHistoricalRead?: boolean;
       },
       restObservationAppliedAt: 0,
       restObservations: [] as Array<{
@@ -488,6 +489,7 @@ else if(args[0]==="api"&&args.some(arg=>arg.startsWith("repos/fixture/repo/actio
   const jobs=s.priorCi.jobs??[{name:"openclaw/ci-gate",status:"completed",conclusion:"success",head_sha:s.priorCi.runHead,run_id:501}];
   if(args.some(arg=>arg.includes("/jobs?"))) out([{total_count:jobs.length,jobs}]);
   else out({id:501,run_attempt:args.includes("repos/fixture/repo/actions/runs/501")?s.priorCi.latestAttempt:2,check_suite_id:10,head_sha:s.priorCi.runHead,repository:{full_name:s.repo.nameWithOwner},path:s.priorCi.workflowPath,event:s.priorCi.event,head_branch:s.priorCi.branch,head_repository:s.priorCi.runRepository??s.priorCi.sourceRepository,status:"completed",conclusion:s.priorCi.runConclusion,pull_requests:s.priorCi.event==="pull_request"&&!s.priorCi.omitPullRequests?[{number:123,head:{sha:s.priorCi.runHead},base:{repo:{id:s.repoAuthority.id}}}]:[]});
+  if(s.restObservation?.afterHistoricalRead&&s.restMainReads>0) applyRestObservation();
 }
 else if(args[0]==="api"&&args.some(arg=>arg.startsWith("repos/fixture/repo/check-runs/601"))) {
   if(!args.includes("Cache-Control: max-age=0")) fail("missing live deadline header");
@@ -504,7 +506,7 @@ else if(args[0]==="api"&&args.includes("user")) {
 }
 else if(args[0]==="api"&&args.includes("repos/fixture/repo/pulls/123")) {
   if(s.repoAuthorityUnavailable) fail("repository metadata unavailable");
-  if(s.restObservation&&!s.restObservation.afterPolicyRead&&s.restObservation.afterRestMainReads===undefined&&
+  if(s.restObservation&&!s.restObservation.afterPolicyRead&&!s.restObservation.afterHistoricalRead&&s.restObservation.afterRestMainReads===undefined&&
     (s.quotaTriggered||(s.graphqlMergeProjection&&s.observationReads>0))) {
     applyRestObservation();
   }

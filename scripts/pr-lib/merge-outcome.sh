@@ -851,8 +851,7 @@ verify_merge_main_advance() {
 merge_outcome_stable() {
   local reread="$MERGE_OBSERVATION" main previous_main observation_attempt=0 settling=false local_only="${2:-false}"
   local main_floor="${4:-}" supplied="${5:-}" before="${6:-}"
-  local settle_start settle_deadline settle_delay=2 prior_ci_round=false projection_at
-  settle_start=$(pr_merge_now); settle_deadline=$((settle_start + 60))
+  local settle_start="" settle_deadline="" settle_delay=2 prior_ci_round=false projection_at
   if [ "${3:-}" = requalify-prior-ci ] && [ "${MERGE_USE_PRIOR_CI_ADMIN:-false}" = true ]; then
     prior_ci_round=true
     settling="${MERGE_PRIOR_CI_SETTLING:-false}"
@@ -874,9 +873,7 @@ merge_outcome_stable() {
         merge_outcome_stop "observation reread: observed=unavailable or invalid; expected=authoritative PR/main metadata"; return 1;
       }
     fi
-    if [ "$prior_ci_round" = true ] || [ "$settling" = true ]; then
-      projection_at=$(pr_merge_now)
-    fi
+    projection_at=$(pr_merge_now)
     if { [ "$prior_ci_round" = true ] && [ -n "${MERGE_PRIOR_CI_UNKNOWN_START:-}" ] &&
       [ "$projection_at" -ge "$((MERGE_PRIOR_CI_UNKNOWN_START + 60))" ]; } ||
       { [ "$prior_ci_round" = false ] && [ "$settling" = true ] && [ "$projection_at" -ge "$settle_deadline" ]; }; then
@@ -889,7 +886,8 @@ merge_outcome_stable() {
       if printf '%s\n' "$reread" | jq -e '.pr.mergeable == "UNKNOWN" or .pr.mergeStateStatus == "UNKNOWN"' >/dev/null; then
         [ -n "$MERGE_PRIOR_CI_UNKNOWN_START" ] || MERGE_PRIOR_CI_UNKNOWN_START="$projection_at"
         MERGE_PRIOR_CI_SETTLING=true
-        settle_deadline=$((MERGE_PRIOR_CI_UNKNOWN_START + 60))
+        settle_start="$MERGE_PRIOR_CI_UNKNOWN_START"
+        settle_deadline=$((settle_start + 60))
       else
         MERGE_PRIOR_CI_UNKNOWN_START=""
         MERGE_PRIOR_CI_UNKNOWN_DELAY=2
@@ -937,6 +935,11 @@ merge_outcome_stable() {
         main_floor=""
         MERGE_OBSERVED_MAIN="$main"
         if printf '%s\n' "$reread" | jq -e '.pr.mergeable == "UNKNOWN" or .pr.mergeStateStatus == "UNKNOWN"' >/dev/null; then
+          if [ "$prior_ci_round" = false ] && [ "$settling" = false ]; then
+            # The initial read is not part of the UNKNOWN settlement window.
+            settle_start="$projection_at"
+            settle_deadline=$((settle_start + 60))
+          fi
           settling=true
           MERGE_PRIOR_CI_RECALCULATED=true
           # The in-process snapshot already ended with live authority. Any wait

@@ -77,7 +77,8 @@ for the evidence fields and supported policy limits.
 An admin attempt requalifies verified fast-forward main movement for up to 15
 minutes and 32 rounds, reporting each round's elapsed time. A round must finish
 before that deadline. Persistent mergeability recalculation has a separate
-60-second settle window with 2-second, 4-second, then 8-second backoff. Exhausting
+60-second settle window from the first UNKNOWN projection, with 2-second,
+4-second, then 8-second backoff. Exhausting
 either bound stops before retaining intent or dispatching a merge. In-flight
 reads may finish after the deadline, but cannot admit a merge or start another
 round.
@@ -91,8 +92,9 @@ Completed historical attempt job data, tested-merge and source
 object equality, the prepared-head delta, and operator evidence may be reused
 only within the uninterrupted, lock-owning invocation and their pinned identities.
 
-Historical proof precedes the final main read. Current review and security
-authority are verified afterward, followed by the final writer check. Local-only
+Historical proof precedes the shared check inventory and final main read.
+Current review and security authority are verified afterward, followed by the
+final writer check. Local-only
 verification proves main's ancestry and merge tree, checks overlap and
 critical-path drift, and compares the Security Review publisher's protected
 sources against that exact tip. Missing

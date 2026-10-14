@@ -14,6 +14,7 @@ import path from "node:path";
  */
 
 const PLAIN_GH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+const ASYNC_GH_DRAIN_GRACE_MS = 1_000;
 let activeAsyncGh = 0;
 const pendingAsyncGh = [];
 let asyncGhRefusal;
@@ -57,17 +58,26 @@ async function runGhAsync(file, args, options) {
       /** @type {Error | undefined} */
       let failure;
       let timeout;
+      let drainTimeout;
+      let stopping = false;
       const stop = () => {
-        // Match execFile's bounded failure behavior without closing the inherited
-        // writer notifier. Descendants can still hold it after these pipes close.
-        const outputs = [child.stdout, child.stderr].filter(Boolean);
-        if (outputs.some((pipe) => !pipe.readableEnded && !pipe.destroyed)) {
-          Object.assign(failure, { processTreeState: "indeterminate" });
-          refuseFurtherAsyncGh(failure);
+        if (stopping) {
+          return;
         }
-        for (const pipe of outputs) {
-          pipe.destroy();
-        }
+        stopping = true;
+        clearTimeout(timeout);
+        // Give a terminated leader's output time to reach EOF on a slow host.
+        // Forced capture closure cannot prove inherited notifier/input lifetime.
+        drainTimeout = setTimeout(() => {
+          const outputs = [child.stdout, child.stderr].filter(Boolean);
+          if (outputs.some((pipe) => !pipe.readableEnded && !pipe.destroyed)) {
+            Object.assign(failure, { processTreeState: "indeterminate" });
+            refuseFurtherAsyncGh(failure);
+          }
+          for (const pipe of outputs) {
+            pipe.destroy();
+          }
+        }, ASYNC_GH_DRAIN_GRACE_MS);
         child.kill(options.killSignal ?? "SIGTERM");
       };
       for (const stream of ["stdout", "stderr"]) {
@@ -91,6 +101,7 @@ async function runGhAsync(file, args, options) {
       // Settle only after streams and the child close, including failure paths.
       child.on("close", (code, signal) => {
         clearTimeout(timeout);
+        clearTimeout(drainTimeout);
         const decode = (chunks) => {
           const bytes = Buffer.concat(chunks);
           return options.encoding && options.encoding !== "buffer"

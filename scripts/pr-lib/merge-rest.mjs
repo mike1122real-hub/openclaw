@@ -728,20 +728,19 @@ export async function withPriorCiObservation(repo, pr, { prepare, finish }) {
     record.merged || authority.permissions?.admin === true || authority.permissions?.push === true,
     "policy-reader admin access changed",
   );
+  const shared = {
+    policy,
+    main: startingMain,
+    head: record.head.sha,
+    repositoryId: authority.id,
+  };
+  const prepared = await prepare(shared);
   const checks =
     record.state === "open"
       ? await readRequiredMergeChecksAsync(repo, record.head.sha, policy, {
           includeCheckIdentity: true,
         })
       : undefined;
-  const shared = {
-    policy,
-    checks: checks ?? [],
-    main: startingMain,
-    head: record.head.sha,
-    repositoryId: authority.id,
-  };
-  const prepared = await prepare(shared);
   const [currentResult, currentPolicyResult] = await Promise.allSettled([
     execPrGhAsync(apiArgs(repo, `/pulls/${pr}`, ["--include"]), { encoding: "utf8" }, "plain"),
     readMergePolicyAsync(repo),
@@ -773,7 +772,7 @@ export async function withPriorCiObservation(repo, pr, { prepare, finish }) {
   requireEvidence(sameIdentity, "PR identity, head, or lifecycle changed while reading evidence");
   requireEvidence(samePolicy, "branch policy changed while reading evidence");
   // Review, security, and final writer authority follow the final main read.
-  const value = await finish(prepared, { ...shared, main: finalMain });
+  const value = await finish(prepared, { ...shared, checks: checks ?? [], main: finalMain });
   return {
     observation: observationResult(
       repo,

@@ -219,6 +219,33 @@ describePosix("prior-CI whole REST observation fallback", () => {
     expectNoDispatch(f);
   });
 
+  it("reads its single check inventory after historical preparation", () => {
+    const f = unknownGraphqlCandidate();
+    f.save({
+      ...f.state(),
+      restObservation: { afterHistoricalRead: true, restUnseenSuite: "new-gate" },
+    });
+
+    const result = f.adminPriorCi(f.path);
+
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain("currently effective CI gate");
+    const state = f.state();
+    expect(state.restObservationAppliedAt).toBeGreaterThan(0);
+    const historyRead = state.calls.findLastIndex((call) =>
+      call.includes("repos/fixture/repo/actions/runs/501/attempts/2"),
+    );
+    expect(historyRead).toBeGreaterThan(0);
+    expect(
+      state.calls
+        .slice(historyRead + 1)
+        .filter((call) =>
+          call.includes(`repos/fixture/repo/commits/${f.head}/status?per_page=100`),
+        ),
+    ).toHaveLength(1);
+    expectNoDispatch(f);
+  });
+
   it.each([1, 4])(
     "preserves prior-CI admission when GraphQL quota expires after %s known observations",
     (observations) => {

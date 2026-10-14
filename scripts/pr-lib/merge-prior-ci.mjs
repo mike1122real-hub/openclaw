@@ -478,7 +478,6 @@ async function preparePreExistingFailure(
   evidence,
   run,
   jobs,
-  checks,
   main,
   repositoryId,
   immutable,
@@ -503,29 +502,29 @@ async function preparePreExistingFailure(
     jobs,
     cancelledRoots,
   ));
-  const current = checks.filter(
-    (check) =>
-      check.name === "openclaw/ci-gate" &&
-      positiveInteger(check.checkRunId) &&
-      check.publisherId === 15368,
-  );
-  requireEvidence(
-    gates.length === 1 &&
-      current.length === 1 &&
-      ["failure", "cancelled"].includes(gates[0].conclusion) &&
-      ["fail", "cancel"].includes(current[0].bucket) &&
-      current[0].publisherId === 15368 &&
-      positiveInteger(run.check_suite_id) &&
-      current[0].checkSuiteId === run.check_suite_id &&
-      gates[0].check_run_url ===
-        `https://api.github.com/repos/${evidence.repository}/check-runs/${current[0].checkRunId}`,
-    "selected failed attempt must own the currently effective CI gate check-run",
-  );
-  const combined = checks.filter(
-    (check) => check.name === "openclaw/ci-gate" && positiveInteger(check.statusId),
-  );
-  requireEvidence(combined.length === 1, "current combined CI/security status is required");
-  return async (qualifiedMain) => {
+  return async (checks, qualifiedMain) => {
+    const current = checks.filter(
+      (check) =>
+        check.name === "openclaw/ci-gate" &&
+        positiveInteger(check.checkRunId) &&
+        check.publisherId === 15368,
+    );
+    requireEvidence(
+      gates.length === 1 &&
+        current.length === 1 &&
+        ["failure", "cancelled"].includes(gates[0].conclusion) &&
+        ["fail", "cancel"].includes(current[0].bucket) &&
+        current[0].publisherId === 15368 &&
+        positiveInteger(run.check_suite_id) &&
+        current[0].checkSuiteId === run.check_suite_id &&
+        gates[0].check_run_url ===
+          `https://api.github.com/repos/${evidence.repository}/check-runs/${current[0].checkRunId}`,
+      "selected failed attempt must own the currently effective CI gate check-run",
+    );
+    const combined = checks.filter(
+      (check) => check.name === "openclaw/ci-gate" && positiveInteger(check.statusId),
+    );
+    requireEvidence(combined.length === 1, "current combined CI/security status is required");
     const securityReview = await verifyPriorCiSecurity({
       repository: evidence.repository,
       repositoryId,
@@ -923,17 +922,16 @@ async function verifyPriorCiAdmin({
       "selected prior attempt must contain a successful CI gate for its exact head",
     );
   }
-  const checks =
-    sharedSnapshot?.checks ??
-    (await readRequiredMergeChecksAsync(repo, head, policy, {
-      includeCheckIdentity: preExisting(evidence),
-    }));
+  const checks = deferFinalAuthority
+    ? undefined
+    : await readRequiredMergeChecksAsync(repo, head, policy, {
+        includeCheckIdentity: preExisting(evidence),
+      });
   const finishFailureProof = preExisting(evidence)
     ? await preparePreExistingFailure(
         evidence,
         run,
         jobs,
-        checks,
         observedMain,
         authority.id,
         immutable,
@@ -941,26 +939,36 @@ async function verifyPriorCiAdmin({
       )
     : undefined;
   const failureProof =
-    !deferFinalAuthority && finishFailureProof ? await finishFailureProof(observedMain) : undefined;
-  if (!preExisting(evidence)) {
+    !deferFinalAuthority && finishFailureProof
+      ? await finishFailureProof(checks, observedMain)
+      : undefined;
+  const verifyChecks = (currentChecks) => {
     requireEvidence(
-      Array.isArray(checks) &&
-        checks.some((check) => check.name === "openclaw/ci-gate") &&
-        checks.every(
+      Array.isArray(currentChecks) &&
+        currentChecks.some((check) => check.name === "openclaw/ci-gate") &&
+        currentChecks.every(
           (check) =>
             check.bucket === "pass" ||
             (check.name === "openclaw/ci-gate" && ["pending", "skipping"].includes(check.bucket)),
         ),
       "only pending/skipped normal CI may be waived; failed CI and other checks, including security, remain blocking",
     );
+  };
+  if (!preExisting(evidence) && !deferFinalAuthority) {
+    verifyChecks(checks);
   }
-  const complete = async (observedPolicy, qualifiedMain = observedMain) => {
+  const complete = async (observedPolicy, qualifiedMain = observedMain, currentChecks = checks) => {
     const finalPolicy = observedPolicy ?? (await readMergePolicyAsync(repo));
+    if (!preExisting(evidence) && deferFinalAuthority) {
+      verifyChecks(currentChecks);
+    }
     // Historical proof precedes the final observation; mutable reviews and
     // security follow it, with writer authority last and no duplicate inventory.
     const [finalReview, finalFailureProof] = await readAll([
       deferFinalAuthority ? readReview() : null,
-      deferFinalAuthority && finishFailureProof ? finishFailureProof(qualifiedMain) : failureProof,
+      deferFinalAuthority && finishFailureProof
+        ? finishFailureProof(currentChecks, qualifiedMain)
+        : failureProof,
     ]);
     if (deferFinalAuthority) {
       verifyReview(finalReview);
@@ -1010,7 +1018,8 @@ async function verifyMode(mode, options) {
   const result = await withPriorCiObservation(repo, options.pr, {
     prepare: (sharedSnapshot) =>
       verifyPriorCiAdmin({ ...options, immutable, sharedSnapshot, deferFinalAuthority: true }),
-    finish: (prepared, snapshot) => prepared.complete(snapshot.policy, snapshot.main),
+    finish: (prepared, snapshot) =>
+      prepared.complete(snapshot.policy, snapshot.main, snapshot.checks),
   });
   return {
     proof: result.value,
