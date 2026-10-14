@@ -2,7 +2,7 @@ import Testing
 @testable import OpenClaw
 
 struct TextSummarySupportTests {
-    @Test(arguments: [
+    private static let recoveryDiagnostics: [(String, String)] = [
         (
             "Gateway uninstall failed: service inspection unavailable\n[openclaw] The CLI command failed.\n" +
                 "[openclaw] For help, run `openclaw --profile example doctor`.",
@@ -19,7 +19,9 @@ struct TextSummarySupportTests {
                 "[openclaw] Try: openclaw doctor\n[openclaw] Help: openclaw --help",
             "[openclaw] Reason: Service ownership changed."),
         ("Error: old failure\nHelp: normal application output", "Help: normal application output"),
-    ])
+    ]
+
+    @Test(arguments: Self.recoveryDiagnostics)
     func `surfaces CLI diagnostics before recovery footers`(output: String, expected: String) {
         #expect(TextSummarySupport.summarizeLastLine(output) == expected)
     }
