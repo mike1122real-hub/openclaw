@@ -107,6 +107,7 @@ function* execPrGhSteps(args, options = {}) {
   let commandArgs = args;
   let gitPath;
   let inputDirectory;
+  let retainResources = false;
   try {
     if (args[0] === "api" && option(args, "--input") === "-") {
       // The relay cannot forward stdin. Keep caller bytes intact until its
@@ -135,6 +136,8 @@ function* execPrGhSteps(args, options = {}) {
     }
     return yield [commandArgs, captured];
   } catch (error) {
+    // Forced capture closure proves leader exit, not descendant input lifetime.
+    retainResources = error?.processTreeState === "indeterminate";
     const graphqlQuotaExhausted = resourceFor(args) === "graphql" && isGraphqlQuotaExhausted(error);
     const coreQuotaExhausted = resourceFor(args) === "core" && isCoreQuotaExhausted(error);
     const reason = githubAccessFailure(error);
@@ -185,10 +188,13 @@ function* execPrGhSteps(args, options = {}) {
     failure.status = reason === "quota" ? 75 : 77;
     failure.graphqlQuotaExhausted = graphqlQuotaExhausted;
     failure.coreQuotaExhausted = coreQuotaExhausted;
+    if (retainResources) {
+      failure.processTreeState = "indeterminate";
+    }
     throw failure;
   } finally {
     for (const directory of [inputDirectory, gitPath]) {
-      if (!directory) {
+      if (!directory || retainResources) {
         continue;
       }
       try {

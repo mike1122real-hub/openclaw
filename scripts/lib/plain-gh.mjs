@@ -16,17 +16,36 @@ import path from "node:path";
 const PLAIN_GH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 let activeAsyncGh = 0;
 const pendingAsyncGh = [];
+let asyncGhRefusal;
+
+function refuseFurtherAsyncGh(cause) {
+  asyncGhRefusal ??= Object.assign(
+    new Error("Earlier GitHub child output did not drain; refusing further asynchronous reads", {
+      cause,
+    }),
+    { code: "OPENCLAW_GH_UNJOINED" },
+  );
+  for (const pending of pendingAsyncGh.splice(0)) {
+    pending.reject(asyncGhRefusal);
+  }
+}
 
 // Share the process-wide budget across protected-writer and cache-aware reads.
 async function runGhAsync(file, args, options) {
+  if (asyncGhRefusal) {
+    throw asyncGhRefusal;
+  }
   if (activeAsyncGh >= 4) {
-    await new Promise((resolve) => {
-      pendingAsyncGh.push(resolve);
+    await new Promise((resolve, reject) => {
+      pendingAsyncGh.push({ resolve, reject });
     });
   } else {
     activeAsyncGh += 1;
   }
   try {
+    if (asyncGhRefusal) {
+      throw asyncGhRefusal;
+    }
     return await new Promise((resolve, reject) => {
       const child = spawn(file, args, {
         ...options,
@@ -37,6 +56,20 @@ async function runGhAsync(file, args, options) {
       const maxBuffer = options.maxBuffer ?? PLAIN_GH_MAX_BUFFER_BYTES;
       /** @type {Error | undefined} */
       let failure;
+      let timeout;
+      const stop = () => {
+        // Match execFile's bounded failure behavior without closing the inherited
+        // writer notifier. Descendants can still hold it after these pipes close.
+        const outputs = [child.stdout, child.stderr].filter(Boolean);
+        if (outputs.some((pipe) => !pipe.readableEnded && !pipe.destroyed)) {
+          Object.assign(failure, { processTreeState: "indeterminate" });
+          refuseFurtherAsyncGh(failure);
+        }
+        for (const pipe of outputs) {
+          pipe.destroy();
+        }
+        child.kill(options.killSignal ?? "SIGTERM");
+      };
       for (const stream of ["stdout", "stderr"]) {
         child[stream]?.on("data", (bytes) => {
           const chunk = Buffer.from(bytes);
@@ -45,7 +78,7 @@ async function runGhAsync(file, args, options) {
             failure = Object.assign(new Error(`${stream} maxBuffer length exceeded`), {
               code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
             });
-            child.kill(options.killSignal ?? "SIGTERM");
+            stop();
           }
           if (lengths[stream] <= maxBuffer) {
             output[stream].push(chunk);
@@ -57,6 +90,7 @@ async function runGhAsync(file, args, options) {
       });
       // Settle only after streams and the child close, including failure paths.
       child.on("close", (code, signal) => {
+        clearTimeout(timeout);
         const decode = (chunks) => {
           const bytes = Buffer.concat(chunks);
           return options.encoding && options.encoding !== "buffer"
@@ -81,12 +115,25 @@ async function runGhAsync(file, args, options) {
           resolve(stdout);
         }
       });
+      // spawn's timer ends at leader exit; a wrapper's descendants can retain
+      // its output longer. The read deadline also covers that drainage.
+      if (options.timeout > 0) {
+        timeout = setTimeout(() => {
+          failure ??= Object.assign(
+            new Error(`GitHub child timed out after ${options.timeout}ms`),
+            {
+              code: "ETIMEDOUT",
+            },
+          );
+          stop();
+        }, options.timeout);
+      }
       child.stdin?.end(options.input);
     });
   } finally {
     const next = pendingAsyncGh.shift();
     if (next) {
-      next();
+      next.resolve();
     } else {
       activeAsyncGh -= 1;
     }
