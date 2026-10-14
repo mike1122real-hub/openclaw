@@ -65,8 +65,14 @@ function sourceReplacement(model: string): MemorySourceIndexReplacement {
   };
 }
 
-function indexCommands(calls: unknown[][]): string[] {
-  return calls.flatMap(([message]) => {
+function recordIndexCommands(target: Pick<Worker, "postMessage">) {
+  const commands: string[] = [];
+  const postMessage = target.postMessage;
+  const messages = vi.spyOn(target, "postMessage").mockImplementation(function (
+    this: typeof target,
+    ...args
+  ) {
+    const message: unknown = args[0];
     if (
       typeof message === "object" &&
       message !== null &&
@@ -81,24 +87,25 @@ function indexCommands(calls: unknown[][]): string[] {
       "type" in message.input.command &&
       typeof message.input.command.type === "string"
     ) {
-      return [message.input.command.type];
-    }
-    if (
-      typeof message !== "object" ||
-      message === null ||
-      !("type" in message) ||
-      message.type !== "execute" ||
-      !("input" in message) ||
-      !(message.input instanceof Uint8Array)
+      commands.push(message.input.command.type);
+    } else if (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === "execute" &&
+      "input" in message &&
+      message.input instanceof Uint8Array
     ) {
-      return [];
+      // Capture before the native send detaches the serialized command buffer.
+      const command = deserialize(message.input) as {
+        type: string;
+        input?: { command?: { type: string } };
+      };
+      commands.push(command.input?.command?.type ?? command.type);
     }
-    const command = deserialize(message.input) as {
-      type: string;
-      input?: { command?: { type: string } };
-    };
-    return [command.input?.command?.type ?? command.type];
+    return postMessage.apply(this, args);
   });
+  return { commands, restore: () => messages.mockRestore() };
 }
 
 it("retains session entry facts across memory publication and refreshes after a session write", async () => {
@@ -159,7 +166,7 @@ it("retains published memory facts across session and embedding-cache writes", a
   await withPublishedIndex(async (database) => {
     await database.writeMetadata(metadata);
     const facts = database.facts;
-    const messages = vi.spyOn(MessagePort.prototype, "postMessage");
+    const messages = recordIndexCommands(MessagePort.prototype);
     try {
       await upsertSessionEntry({
         agentId: "main",
@@ -184,14 +191,14 @@ it("retains published memory facts across session and embedding-cache writes", a
       );
       await database.refreshFacts();
       expect(database.facts).toBe(facts);
-      expect(indexCommands(messages.mock.calls)).not.toContain("index.facts");
+      expect(messages.commands).not.toContain("index.facts");
 
       await database.writeMetadata({ ...metadata, model: "updated-model" });
       await database.refreshFacts();
       expect(database.facts.meta?.model).toBe("updated-model");
-      expect(indexCommands(messages.mock.calls)).not.toContain("index.facts");
+      expect(messages.commands).not.toContain("index.facts");
     } finally {
-      messages.mockRestore();
+      messages.restore();
     }
   });
 });
@@ -333,7 +340,7 @@ it("refreshes facts once after another in-process writer commits", async () => {
       db.prepare("UPDATE memory_index_state SET revision = revision + 1 WHERE id = 1").run();
     });
     const sql = observeHostDataSql();
-    const messages = vi.spyOn(Worker.prototype, "postMessage");
+    const messages = recordIndexCommands(Worker.prototype);
     try {
       for (let turn = 0; turn < 3; turn++) {
         await database.refreshFacts();
@@ -349,9 +356,9 @@ it("refreshes facts once after another in-process writer commits", async () => {
         });
       }
       expect(sql.queries).toEqual([]);
-      expect(indexCommands(messages.mock.calls)).toEqual(["index.facts"]);
+      expect(messages.commands).toEqual(["index.facts"]);
     } finally {
-      messages.mockRestore();
+      messages.restore();
       sql.restore();
     }
   });

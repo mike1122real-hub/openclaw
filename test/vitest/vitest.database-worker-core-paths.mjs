@@ -190,6 +190,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/gateway/session-incognito-lifetime.actor.test.ts",
   "src/state/openclaw-agent-pending-inputs-schema.test.ts",
   "src/agents/bash-tools.visible-subagent-notify.test.ts",
+  "src/agents/agent-command.admission-failure.test.ts",
   "src/agents/agent-command.compaction-rotation.test.ts",
   "src/agents/agent-command.live-model-switch.test.ts",
   "src/agents/agent-command.embedded-maintenance.test.ts",

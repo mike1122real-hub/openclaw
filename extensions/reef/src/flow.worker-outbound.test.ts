@@ -64,19 +64,21 @@ describe("Reef worker outbound composition", () => {
   afterAll(resetFlowStoresForTests);
 
   function recordDispatches() {
-    const sends = vi.spyOn(Worker.prototype, "postMessage");
-    return () =>
-      sends.mock.calls.flatMap(([message]) => {
-        if (
-          !isRecord(message) ||
-          message.type !== "execute" ||
-          !(message.input instanceof Uint8Array)
-        ) {
-          return [];
-        }
-        const command: unknown = deserialize(Buffer.from(message.input));
-        return [isRecord(command) ? command.type : "invalid command"];
-      });
+    const commands: unknown[] = [];
+    const postMessage = Worker.prototype.postMessage;
+    vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
+      this: Worker,
+      message,
+      transferList,
+    ) {
+      if (isRecord(message) && message.type === "execute" && message.input instanceof Uint8Array) {
+        // The native send transfers the input buffer and detaches it from the sender.
+        const command: unknown = deserialize(message.input);
+        commands.push(isRecord(command) ? command.type : "invalid command");
+      }
+      return postMessage.call(this, message, transferList);
+    });
+    return () => commands;
   }
 
   it("persists proposal, verdict, envelope and exact delivery in two worker commands without host SQL", async () => {
