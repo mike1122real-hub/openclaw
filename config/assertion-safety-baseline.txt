@@ -374,7 +374,6 @@ extensions/googlechat/src/approval-card-actions.ts	1
 extensions/googlechat/src/approval-handler.runtime.ts	1
 extensions/googlechat/src/google-auth.runtime.ts	4
 extensions/googlechat/src/monitor-event.ts	2
-extensions/groq/index.ts	2
 extensions/huggingface/index.ts	1
 extensions/huggingface/models.ts	2
 extensions/imessage/src/actions-contract.ts	1
@@ -1311,7 +1310,7 @@ src/agents/harness/hook-helpers.ts	1
 src/agents/harness/lifecycle-hook-helpers.ts	1
 src/agents/harness/native-hook-relay-client.ts	2
 src/agents/harness/native-hook-relay-codec.ts	2
-src/agents/harness/selection.ts	4
+src/agents/harness/selection.ts	3
 src/agents/harness/support.ts	1
 src/agents/identity.ts	5
 src/agents/internal-runtime-context.ts	1
