@@ -9,10 +9,10 @@ import {
   verifyVitestWorkerArtifacts,
   VITEST_WORKER_PREPARE_REQUEST,
   VITEST_WORKER_PREPARE_REPLY,
-  type VitestWorkerDescriptor,
   type VitestWorkerManifest,
 } from "./vitest-worker-artifacts.mts";
 import { useVitestWorkerCache } from "./vitest-worker-cache-policy.mts";
+import type { VitestWorkerDescriptor } from "./vitest-worker-descriptor.mts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 

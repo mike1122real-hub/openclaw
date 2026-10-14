@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { getVitestWorkerDescriptor } from "../../scripts/lib/vitest-worker-bootstrap.mts";
+import { getVitestWorkerDescriptor } from "../../scripts/lib/vitest-worker-descriptor.mts";
 import { createVitestWorkerRun } from "../../scripts/lib/vitest-worker-run.mts";
 import { runVitestShutdownCommand } from "../helpers/vitest-shutdown-command.ts";
 

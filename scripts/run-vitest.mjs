@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { runNodeCliShim } from "./lib/tsx-cli-shim.mjs";
-import { getVitestWorkerDescriptor } from "./lib/vitest-worker-bootstrap.mts";
+import { getVitestWorkerDescriptor } from "./lib/vitest-worker-descriptor.mts";
 
 const parent = getVitestWorkerDescriptor();
 const workerRun = parent

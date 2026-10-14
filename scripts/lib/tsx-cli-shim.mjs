@@ -120,9 +120,10 @@ async function runCliShimProcess(moduleUrl, options, nodeArgs, onReady) {
     ...nodeArgs,
     ...resolveForwardedNodeCompilerArgs(),
     ...(options.execArgv ?? []),
+    // This child entry belongs to the worker asset inventory, not this module's import graph.
     ...(options.workerRun
       ? [
-          fileURLToPath(new URL("./vitest-worker-bootstrap.mts", import.meta.url)),
+          path.join(SHIM_CHECKOUT_ROOT, "scripts/lib/vitest-worker-bootstrap.mts"),
           options.workerRun.descriptor.directory,
         ]
       : []),
