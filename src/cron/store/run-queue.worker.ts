@@ -78,7 +78,8 @@ function skipRequest(
     database: db,
     receiptSchema,
     handle,
-    pendingReceiptId: job?.state.runningAtMs === undefined ? undefined : job.state.runningReceiptId,
+    pendingReceiptId:
+      job?.state.runningAtMs === undefined ? handle.receiptId : job.state.runningReceiptId,
     status,
     finishedAtMs: nowMs,
     error,
@@ -136,7 +137,7 @@ function requestCronRunsInDatabase(
   };
   for (const request of input.requests) {
     const job = jobs.get(request.jobId);
-    const existing = executeSqliteQueryTakeFirstSync(
+    let existing = executeSqliteQueryTakeFirstSync(
       db,
       query(db)
         .selectFrom("cron_run_receipts")
@@ -153,6 +154,30 @@ function requestCronRunsInDatabase(
         .where("status", "=", "running"),
     );
     const timed = parseCronScheduledRunId(request.receiptId);
+    if (
+      !active &&
+      request.mode === "scheduled" &&
+      timed &&
+      (!existing ||
+        (existing.status === "skipped" &&
+          existing.error_text === CRON_ADMISSION_DEFERRED_RECEIPT_ERROR))
+    ) {
+      // Nonce retries can outlive their deterministic receipt. The latest retained
+      // attempt decides whether the occurrence is still deferred or has been consumed.
+      existing =
+        executeSqliteQuerySync(
+          db,
+          query(db)
+            .selectFrom("cron_run_receipts")
+            .selectAll()
+            .where("store_key", "=", input.storeKey)
+            .where("job_id", "=", request.jobId)
+            .orderBy("cursor_id", "desc"),
+        ).rows.find(
+          (row) =>
+            parseCronScheduledRunId(row.receipt_id)?.scheduledSlotMs === timed.scheduledSlotMs,
+        ) ?? existing;
+    }
     const deferred =
       request.mode === "scheduled" &&
       existing?.status === "skipped" &&
