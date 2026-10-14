@@ -4,6 +4,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { ApplicationGateway } from "../app/gateway.ts";
 import { sessionProgressCardsForGateway } from "../lib/session-progress-cards.ts";
 import { useSolidControllerHost, type SolidControllerHost } from "../lit/solid-controller-host.ts";
+import { ControllerHost } from "../lit/subscriptions-controller.ts";
 import { createApplicationGateway } from "../test-helpers/application-context.ts";
 import { createTestGatewayClient } from "../test-helpers/gateway-client.ts";
 import { gatewayHelloForMethods } from "../test-helpers/gateway-methods.ts";
@@ -208,7 +209,7 @@ describe("SessionProgressCardController", () => {
   );
 
   it.each([true, false])(
-    "keeps queued updates disposed and watches once per mount (session target: %s)",
+    "keeps queued updates detached and reconnects once (session target: %s)",
     async (hasTarget) => {
       const target = hasTarget ? { sessionKey: "agent:main:progress-lifecycle" } : null;
       const request = vi.fn().mockResolvedValue({ card: null });
@@ -231,25 +232,32 @@ describe("SessionProgressCardController", () => {
       const store = sessionProgressCardsForGateway(gateway);
       const subscribe = vi.spyOn(store, "subscribe");
       const watch = vi.spyOn(store, "watch");
-      onTestFinished(() => vi.restoreAllMocks());
+      const host = new ControllerHost();
+      new SessionProgressCardController(host, { gateway: () => gateway, target: () => target });
+      onTestFinished(() => {
+        host.disconnect();
+        vi.restoreAllMocks();
+      });
 
       for (let connections = 1; connections <= 2; connections += 1) {
-        const host = mountProgress(gateway, () => target);
+        host.connect();
+        await host.updateComplete;
         if (target) {
           await store.load(target);
-          flush();
+          await host.updateComplete;
         }
         expect(subscribe).toHaveBeenCalledTimes(connections);
         expect(watch).toHaveBeenCalledTimes(hasTarget ? connections : 0);
         expect(request).toHaveBeenCalledTimes(hasTarget ? connections : 0);
         expect(active).toEqual({ snapshots: 1, events: 1 });
 
-        // Disposal must release the watch before a queued update commits.
-        host.host.requestUpdate();
-        host.unmount();
+        // Chat reconnects this same host after retiring its queued update.
+        host.requestUpdate();
+        const queuedUpdate = host.updateComplete;
+        host.disconnect();
         expect(active).toEqual({ snapshots: 0, events: 0 });
-        flush();
-        expect(host.container.isConnected).toBe(false);
+        await queuedUpdate;
+        expect(host.isConnected).toBe(false);
         expect(active).toEqual({ snapshots: 0, events: 0 });
         expect(subscribe).toHaveBeenCalledTimes(connections);
         expect(watch).toHaveBeenCalledTimes(hasTarget ? connections : 0);
