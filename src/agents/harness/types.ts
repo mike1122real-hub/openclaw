@@ -98,6 +98,7 @@ type AgentHarnessLegacyAttemptResult = Omit<AgentHarnessCanonicalAttemptResult, 
 
 type AgentHarnessAttemptParamsBase = Omit<
   InternalEmbeddedRunAttemptParams,
+  | "thinkingExplicit"
   | "admittedRunContext"
   | "disableToolSearch"
   | "sessionReadScopeKey"
@@ -478,7 +479,7 @@ export type AgentHarnessDescendantCancellationResult = {
 };
 
 /** Activation-only native readiness check; it does not authorize a model turn. */
-export type AgentHarnessSetupVerificationContext = {
+type AgentHarnessSetupVerificationContext = {
   config: OpenClawConfig;
   provider: string;
   modelId: string;
