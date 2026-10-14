@@ -652,6 +652,12 @@ async function runPendingMaintenance(
       }
     }
     owner.rejections = 0;
+    if (noFinalization && !owner.ageFact && isCurrent()) {
+      // Unrelated backfills can invalidate the snapshot without publishing entry changes.
+      // Retry unknown age facts through the quiet window, not their already-due deadline.
+      scheduleMaintenanceAfterWriteQuiet(databasePath, owner);
+      return;
+    }
     if (
       operation.input.activeSessionKeys.length > 0 &&
       !hasCurrentNoCandidates() &&

@@ -393,8 +393,9 @@ If writes invalidate an automatic maintenance plan, its replacement waits for
 the scheduled retry delay (one second, then two seconds). Further writes coalesce
 into that retry without postponing it indefinitely. Three
 consecutive invalidations pause automatic retries and log the cause; a new
-entry write can schedule another attempt. `warn` mode captures the maintenance
-age fact without constructing or dispatching automatic reclamation.
+entry write can schedule another attempt. `warn` mode skips automatic reclamation.
+An unrelated background write can invalidate a no-op pass's age fact without changing
+session eligibility. That pass also waits for the existing quiet window before replanning.
 
 `maxEntries` defaults to 5000 unarchived session rows. Archived rows do not consume
 the cap. Existing explicit limits remain unchanged.
