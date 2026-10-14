@@ -1,9 +1,9 @@
 // Proves follow-up batch ownership through the real channel route and durable-send boundary.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { a2aChannelPlugin } from "../../../extensions/a2a/api.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
+import { loadBundledPluginFacade } from "../../test-utils/bundled-plugin-public-surface.js";
 import {
   createChannelTestPluginBase,
   createTestRegistry,
@@ -13,6 +13,11 @@ import type { ReplyPayload } from "../types.js";
 import { resolveFollowupDeliveryPayloads } from "./followup-delivery-payloads.js";
 import { deliverFollowupDecision, resolveFollowupDeliveryDecision } from "./followup-delivery.js";
 import type { AdmittedFollowupTurn } from "./followup-turn-admission.js";
+
+const { a2aChannelPlugin } = await loadBundledPluginFacade<{ a2aChannelPlugin: ChannelPlugin }>({
+  pluginId: "a2a",
+  artifactBasename: "channel-plugin-api.js",
+});
 
 const channelState = vi.hoisted(() => ({
   outcomes: [] as Array<"delivered" | "failed">,
@@ -171,9 +176,10 @@ describe("follow-up delivery channel boundary", () => {
       const payloads = [
         { text: "thinking level clamped", isStatusNotice: true },
         { text: "run failed", isError: true },
+        setReplyPayloadMetadata({ text: "Gateway restarting" }, { hostNotice: true }),
         { text: "agent answer" },
       ];
-      channelState.outcomes = ["delivered", "delivered", "delivered"];
+      channelState.outcomes = ["delivered", "delivered", "delivered", "delivered"];
       const onBlockReply = vi.fn(async () => {});
 
       await deliverFollowupDecision({

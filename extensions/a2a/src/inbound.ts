@@ -124,7 +124,14 @@ export async function dispatchA2aInbound(params: A2aInboundDispatchParams): Prom
       },
       // Source replies complete the correlated task; the generic message tool
       // starts a separate outbound message without that task correlation.
-      replyOptions: { sourceReplyDeliveryMode: "automatic" },
+      replyOptions: {
+        sourceReplyDeliveryMode: "automatic",
+        onAgentRunTerminalOutcome: (outcome) => {
+          if (outcome === "failed") {
+            params.store.fail(params.taskId, "Agent run failed");
+          }
+        },
+      },
       replyPipeline: {},
     });
     if (dispatch.admission.kind !== "dispatch") {

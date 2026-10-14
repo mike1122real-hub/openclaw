@@ -3,6 +3,7 @@ import {
   createTestRegistry,
   setActivePluginRegistry,
 } from "openclaw/plugin-sdk/channel-test-helpers";
+import { setReplyPayloadMetadata } from "openclaw/plugin-sdk/reply-payload-testing";
 import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { a2aChannelPlugin } from "./channel.js";
@@ -83,7 +84,9 @@ describe("A2A channel inbound dispatch", () => {
       dispatcher.sendBlockReply({ text: "preview" });
       dispatcher.sendFinalReply({ text: "fallback notice", isFallbackNotice: true });
       dispatcher.sendFinalReply({ text: "thinking level clamped", isStatusNotice: true });
-      dispatcher.sendFinalReply({ text: "run failed", isError: true });
+      dispatcher.sendFinalReply(
+        setReplyPayloadMetadata({ text: "Gateway restarting" }, { hostNotice: true }),
+      );
       await dispatcher.waitForIdle();
       expect(fixture.store.get(fixture.task.id)?.status.state).toBe("TASK_STATE_WORKING");
       dispatcher.sendFinalReply({ text: "agent answer" });
@@ -110,6 +113,45 @@ describe("A2A channel inbound dispatch", () => {
       setActivePluginRegistry(createTestRegistry());
     }
   });
+
+  it.each([false, true])(
+    "records a prompt-free task failure without sending an error message (queued: %s)",
+    async (queued) => {
+      const fixture = createA2aInboundFixture();
+      setActivePluginRegistry(
+        createTestRegistry([{ pluginId: "a2a", plugin: a2aChannelPlugin, source: "test" }]),
+      );
+      vi.mocked(
+        fixture.runtime.channel.reply.dispatchReplyWithBufferedBlockDispatcher,
+      ).mockImplementation(async (turn) => {
+        if (queued) {
+          return { ...createA2aDispatchResult(false), deferredToActiveRun: "followup" };
+        }
+        turn.replyOptions?.onAgentRunTerminalOutcome?.("failed");
+        const dispatcher = createReplyDispatcher(turn.dispatcherOptions);
+        dispatcher.sendFinalReply({ text: "private prompt in provider error", isError: true });
+        dispatcher.markComplete();
+        await dispatcher.waitForIdle();
+        return createA2aDispatchResult(false);
+      });
+      try {
+        await dispatchA2aInbound(fixture.params);
+        if (queued) {
+          expect(fixture.task.status.state).toBe("TASK_STATE_WORKING");
+          const turn = vi.mocked(fixture.runtime.channel.inbound.dispatch).mock.calls[0]![0];
+          turn.replyOptions?.onAgentRunTerminalOutcome?.("failed");
+        }
+        expect(fixture.task.status).toMatchObject({
+          state: "TASK_STATE_FAILED",
+          message: { parts: [{ text: "Agent run failed" }] },
+        });
+        expect(fixture.task.artifacts).toEqual([]);
+      } finally {
+        fixture.store.stop();
+        setActivePluginRegistry(createTestRegistry());
+      }
+    },
+  );
 
   it("matches interleaved same-context replies to their originating tasks", async () => {
     const fixture = createA2aInboundFixture();
