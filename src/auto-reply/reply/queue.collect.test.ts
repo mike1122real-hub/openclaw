@@ -1015,7 +1015,7 @@ describe("followup queue collect routing", () => {
     await q.done.promise;
   });
 
-  it.each(["collect", "overflow"] as const)(
+  it.for(["collect", "overflow"] as const)(
     "does not replay accepted %s sources after a sibling adoption times out",
     async (mode, { signal }) => {
       const q = createQueueCase({

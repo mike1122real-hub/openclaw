@@ -305,7 +305,7 @@ export async function executeFollowupTurn(params: {
     return pendingWorkDrain;
   };
   const sessionCtx = buildFollowupTemplateContext(turn);
-  if (turn.preflightError) {
+  if (turn.preflightError && !turn.preflightFailurePayload) {
     throw turn.preflightError instanceof Error
       ? turn.preflightError
       : new Error(formatErrorMessage(turn.preflightError));
@@ -346,6 +346,7 @@ export async function executeFollowupTurn(params: {
     if (admission === "duplicate-source") {
       execution = { runId: turn.runId, outcome: { kind: "aborted", reason: "superseded" } };
     } else if (turn.preflightFailurePayload) {
+      turn.operation.fail("run_failed", turn.preflightError);
       execution = {
         runId: turn.runId,
         outcome: { kind: "rejected", payload: turn.preflightFailurePayload },

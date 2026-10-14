@@ -402,7 +402,7 @@ export async function admitFollowupTurn(params: {
       if (error instanceof FollowupSessionGenerationInvalidatedError) {
         throw error;
       }
-      operation.fail("run_failed", error);
+      turn.preflightError = error;
       const admittedVerboseLevel =
         turn.queued.run.verboseLevelOverride ??
         session.current()?.verboseLevel ??
@@ -412,9 +412,7 @@ export async function admitFollowupTurn(params: {
         buildPreflightCompactionFailureText(formatErrorMessage(error), {
           includeDetails: admittedVerboseLevel === "on" || admittedVerboseLevel === "full",
         });
-      if (!text) {
-        turn.preflightError = error;
-      } else {
+      if (text) {
         turn.preflightFailurePayload = markReplyPayloadForSourceSuppressionDelivery({ text });
       }
     }

@@ -8,6 +8,7 @@ import {
 } from "../../channels/message/ingress-drain.test-helpers.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { FollowupRun } from "./queue.js";
+import { createReplyOperation } from "./reply-run-registry.js";
 
 const state = vi.hoisted(() => ({
   admitReply: vi.fn(),
@@ -819,8 +820,14 @@ describe("admitFollowupTurn", () => {
     expect(operation.complete).toHaveBeenCalledOnce();
   });
 
-  it("refreshes send policy before returning a preflight failure", async () => {
-    const operation = createOperation();
+  it("keeps preflight failure cancellation live while refreshing send policy", async () => {
+    const upstreamAbort = new AbortController();
+    const operation = createReplyOperation({
+      sessionKey: "agent:main:queued-preflight-cancel",
+      sessionId: "queued-session",
+      resetTriggered: false,
+      upstreamAbortSignal: upstreamAbort.signal,
+    });
     const initialEntry: SessionEntry = { sessionId: "queued-session", updatedAt: 1 };
     const sessionStore = { main: initialEntry };
     state.admitReply.mockResolvedValue({ status: "owned", operation, sessionEntry: initialEntry });
@@ -829,16 +836,20 @@ describe("admitFollowupTurn", () => {
       throw new Error("preflight failed");
     });
 
-    const result = await admitFollowupTurn({
-      queued: createRun(),
-      defaults: createDefaults({ sessionEntry: initialEntry, sessionStore }),
-    });
-
-    expect(result).toMatchObject({
-      kind: "admitted",
-      turn: { sendPolicy: "deny", preflightFailurePayload: { text: "preflight failed" } },
-    });
-    expect(operation.fail).toHaveBeenCalledWith("run_failed", expect.any(Error));
+    try {
+      const result = await admitFollowupTurn({
+        queued: createRun(),
+        defaults: createDefaults({ sessionEntry: initialEntry, sessionStore }),
+      });
+      expect(result).toMatchObject({
+        kind: "admitted",
+        turn: { sendPolicy: "deny", preflightFailurePayload: { text: "preflight failed" } },
+      });
+      upstreamAbort.abort(new Error("source canceled before input acceptance"));
+      expect(operation.abortSignal.aborted).toBe(true);
+    } finally {
+      operation.complete();
+    }
   });
 
   it("retains the preflight owner's public recovery guidance for a queued turn", async () => {
