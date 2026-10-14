@@ -1359,6 +1359,7 @@ src/plugins/config-policy.ts
 src/plugins/config-state.ts
 src/plugins/control-plane-workspace.ts
 src/plugins/control-ui-assets.ts
+src/plugins/control-ui-build-manifest.ts
 src/plugins/current-plugin-metadata-snapshot.ts
 src/plugins/current-plugin-metadata-state.ts
 src/plugins/default-enablement.ts
