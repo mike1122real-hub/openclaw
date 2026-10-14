@@ -34,6 +34,7 @@ describe("worker placement session admission", () => {
         workerBundleHash: environment.bootstrapReceipt.bundleHash,
       };
       const acquisition = vi.fn(async () => ({
+        prepareRead: () => undefined,
         current: () => placement,
         release: () => {},
       }));

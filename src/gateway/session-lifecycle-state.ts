@@ -237,6 +237,7 @@ function derivePersistedSessionLifecyclePatch(params: {
   const runId = normalizeLifecycleRunId(params.event.runId);
   const snapshotPatch: Partial<PersistedLifecycleSessionShape> = {
     ...snapshot,
+    restartRecoveryRuns: params.entry?.restartRecoveryRuns,
     ...(snapshot.status === "interrupted" ? { restartRecoveryForceSafeTools: true } : {}),
   };
   const projection = projectMainSessionRecoveryLifecycle({
@@ -488,7 +489,6 @@ async function persistPreparedGatewaySessionLifecycleEvent(
           (phase === "start" && patch.lifecycleRunId === eventRunId))
       ) {
         // Source-less starts and restart aborts arm custody in their existing write.
-        patch.restartRecoveryRuns = entry.restartRecoveryRuns;
         recordLifecycleFence(patch, {
           runId: eventRunId,
           lifecycleGeneration:

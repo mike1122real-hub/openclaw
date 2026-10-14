@@ -28,7 +28,6 @@ import {
 } from "../cron/store/run-receipt-store.test-support.js";
 import { getFileLockProcessStartTime } from "../shared/pid-alive.js";
 import * as deletionJournal from "../state/agent-deletion-journal.js";
-import * as deletionJournal from "../state/agent-deletion-journal.js";
 import { openOpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
 import * as stateReader from "../state/openclaw-state-db-readonly.js";
 import {
@@ -484,7 +483,11 @@ describe("Claw serving automation cleanup", () => {
       try {
         await expect(
           current.gateway.quiesce("worker", deletion.entry.operationId, monitors),
-        ).rejects.toThrow(changed === "operation" ? "deletion fence" : "cleanup state changed");
+        ).rejects.toThrow(
+          changed === "operation"
+            ? "Agent worker deletion no longer owns database cleanup."
+            : "cleanup state changed",
+        );
         expect(receiptReads).toBe(read);
         if (read === 1) {
           expect(database.db.prepare("SELECT 1 AS alive").get()).toEqual({ alive: 1 });
@@ -684,7 +687,7 @@ describe("Claw serving automation cleanup", () => {
           agentId: "worker",
           operationId: firstJournal!.operationId,
         }),
-      ).rejects.toThrow("deletion fence");
+      ).rejects.toThrow("Agent worker deletion no longer owns database cleanup.");
     },
   );
 
