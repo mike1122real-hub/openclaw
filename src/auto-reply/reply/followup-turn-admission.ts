@@ -29,14 +29,10 @@ import {
 import { settleQueuedFollowupPresentation } from "./followup-presentation.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import { refreshActiveGoalContext } from "./inbound-meta.js";
-import {
-  admitFollowupRunLifecycle,
-  isFollowupRunAborted,
-  resolveFollowupAbortSignal,
-  type FollowupRun,
-} from "./queue.js";
+import { isFollowupRunAborted, resolveFollowupAbortSignal, type FollowupRun } from "./queue.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import { admitReplyTurn } from "./reply-turn-admission.js";
+import type { ReplyRestartRecoveryClaimController } from "./restart-recovery-claim.types.js";
 import {
   createReplySessionEntryHandle,
   ReplySessionGenerationInvalidatedError as FollowupSessionGenerationInvalidatedError,
@@ -73,6 +69,7 @@ export type AdmittedFollowupTurn = {
   preflightCompactionApplied: boolean;
   preflightFailurePayload?: ReplyPayload;
   preflightError?: unknown;
+  restartRecovery?: ReplyRestartRecoveryClaimController;
 };
 
 type FollowupAdmissionResult =
@@ -170,7 +167,6 @@ export async function admitFollowupTurn(params: {
   operation.retainFailureUntilComplete();
   let queuedFollowupAdmitted = false;
   try {
-    await admitFollowupRunLifecycle(params.queued);
     if (isFollowupRunAborted(params.queued)) {
       return { kind: "skipped", reason: "aborted", operation };
     }
@@ -228,9 +224,8 @@ export async function admitFollowupTurn(params: {
     }
     run = resolveRunAfterAutoFallbackPrimaryProbeRecheck({
       run,
-      // Reconcile the probe against the same admitted preferences, not a newer
-      // selection published while source adoption awaited. Lifecycle checks and
-      // compaction still consume fresh session state independently above/below.
+      // Preferences stay fixed at admission; lifecycle checks and compaction
+      // independently consume current session state.
       entry: admittedSelectionEntry,
       sessionKey: replySessionKey,
     });

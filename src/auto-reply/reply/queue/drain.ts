@@ -55,6 +55,7 @@ import {
   completeFollowupRunLifecycle,
   completeFollowupRuns,
   retireFollowupRunCancellation,
+  stopFailedFollowupHeartbeats,
 } from "./lifecycle.js";
 import {
   clearFollowupQueue,
@@ -560,6 +561,7 @@ async function runQueueSummaryDelivery(
     try {
       await run({ abortSignal: cancellation.signal, onAdmitted });
     } catch (err) {
+      stopFailedFollowupHeartbeats(err, delivery.sources);
       if (!admitted) {
         if (!(err instanceof FollowupRunDeferredError)) {
           releaseQueueSummaryDeliveryForRetry(queue, delivery);
@@ -868,6 +870,14 @@ export function scheduleFollowupDrain(
     }
   };
   const effectiveRunFollowup = FOLLOWUP_RUN_CALLBACKS.get(key) ?? runFollowup;
+  const runIndividualFollowup = async (item: FollowupRun) => {
+    try {
+      await effectiveRunFollowup(item);
+    } catch (error) {
+      stopFailedFollowupHeartbeats(error, [item]);
+      throw error;
+    }
+  };
   const reserveOptions = {
     inFlight: queue.inFlight,
     shouldRestoreOnError: () =>
@@ -902,7 +912,7 @@ export function scheduleFollowupDrain(
           waitingForSteer = true;
           break;
         }
-        if (await drainProtectedPriorityFollowup(queue, effectiveRunFollowup)) {
+        if (await drainProtectedPriorityFollowup(queue, runIndividualFollowup)) {
           continue;
         }
         if (
@@ -929,7 +939,7 @@ export function scheduleFollowupDrain(
             collectState,
             isCrossChannel,
             items: queue.items,
-            run: effectiveRunFollowup,
+            run: runIndividualFollowup,
             reserveOptions,
           });
           if (collectDrainResult === "empty") {
@@ -1032,6 +1042,7 @@ export function scheduleFollowupDrain(
               ...collectQueuedPromptMedia(activeGroupItems),
             });
           } catch (err) {
+            stopFailedFollowupHeartbeats(err, activeGroupItems);
             if (admitted) {
               completeGroup();
             } else if (reserveOptions.shouldRestoreOnError()) {
@@ -1064,7 +1075,7 @@ export function scheduleFollowupDrain(
           continue;
         }
 
-        if (!(await drainNextQueueItem(queue.items, effectiveRunFollowup, reserveOptions))) {
+        if (!(await drainNextQueueItem(queue.items, runIndividualFollowup, reserveOptions))) {
           break;
         }
       }

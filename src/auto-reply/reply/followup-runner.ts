@@ -230,6 +230,7 @@ export function createFollowupRunner(
               ? execution.execution.outcome.sessionWriter
               : undefined,
           operation: turn.operation,
+          prepareRestartClaimCleanup: turn.restartRecovery?.prepareCompletionCleanup,
           publish: (entry) => turn.session.publish(entry),
         },
         async (turnCompletion) => {
@@ -345,6 +346,13 @@ export function createFollowupRunner(
       }
       if (disposition.kind === "consumed") {
         completeFollowupRunLifecycle(queued);
+      }
+      try {
+        await admittedTurn?.restartRecovery?.clear();
+      } catch (error) {
+        defaultRuntime.error?.(
+          `followup queue: recovery settlement failed: ${formatErrorMessage(error)}`,
+        );
       }
       if (disposition.kind !== "deferred" && admittedTurn?.runId) {
         clearAgentRunContext(admittedTurn.runId);

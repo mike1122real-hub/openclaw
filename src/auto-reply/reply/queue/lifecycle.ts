@@ -1,5 +1,5 @@
 import type { TurnAdoptionLifecycle } from "../../get-reply-options.types.js";
-import type { FollowupRun } from "./types.js";
+import { FollowupRunDeferredError, type FollowupRun } from "./types.js";
 
 const enqueuedTurnAdoptionLifecycles = new WeakSet<TurnAdoptionLifecycle>();
 const admittedTurnAdoptionLifecycles = new WeakSet<TurnAdoptionLifecycle>();
@@ -13,6 +13,25 @@ type FollowupLifecycleRun = Pick<
   FollowupRun,
   "steerPending" | "turnAdoptionLifecycle" | "operatorAuthority"
 >;
+
+function stopFollowupRunPreAdoptionHeartbeat(lifecycle: TurnAdoptionLifecycle | undefined): void {
+  if (lifecycle) {
+    deferredHeartbeatStops.get(lifecycle)?.();
+  }
+}
+
+export function stopFailedFollowupHeartbeats(
+  error: unknown,
+  sources: readonly FollowupRun[],
+): void {
+  if (error instanceof FollowupRunDeferredError) {
+    return;
+  }
+  // Failed preparation is not liveness; let each source's ingress watchdog own bounded retry.
+  for (const source of sources) {
+    stopFollowupRunPreAdoptionHeartbeat(source.turnAdoptionLifecycle);
+  }
+}
 
 export function startFollowupRunPreAdoptionHeartbeat(
   lifecycle: TurnAdoptionLifecycle | undefined,
@@ -35,13 +54,13 @@ export function startFollowupRunPreAdoptionHeartbeat(
   ) {
     return undefined;
   }
-  deferredHeartbeatStops.get(lifecycle)?.();
+  stopFollowupRunPreAdoptionHeartbeat(lifecycle);
   const pulse = () => {
     try {
       heartbeat();
     } catch {
       // Leave recovery to the ingress watchdog when its liveness callback fails.
-      deferredHeartbeatStops.get(lifecycle)?.();
+      stopFollowupRunPreAdoptionHeartbeat(lifecycle);
     }
   };
   const timer = setInterval(pulse, intervalMs).unref();
@@ -127,7 +146,7 @@ export async function admitFollowupRunLifecycle(run: FollowupLifecycleRun): Prom
       await lifecycle.onAdopted();
       run.operatorAuthority?.assertCurrent();
       admittedTurnAdoptionLifecycles.add(lifecycle);
-      deferredHeartbeatStops.get(lifecycle)?.();
+      stopFollowupRunPreAdoptionHeartbeat(lifecycle);
     }
   });
 
@@ -166,7 +185,7 @@ export function completeFollowupRunLifecycle(
     };
 
     if (lifecycle && !completedTurnAdoptionLifecycles.has(lifecycle)) {
-      deferredHeartbeatStops.get(lifecycle)?.();
+      stopFollowupRunPreAdoptionHeartbeat(lifecycle);
       completedTurnAdoptionLifecycles.add(lifecycle);
     }
 

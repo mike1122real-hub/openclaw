@@ -10,14 +10,15 @@ import type { ReplyPayload } from "../types.js";
 import { executeAgentTurn } from "./agent-runner-execution.js";
 import type { AgentTurnExecutionResult } from "./agent-runner-execution.types.js";
 import { buildTerminalAgentRunFailureReplyPayload } from "./agent-runner-failure-reply.js";
+import { createReplyAgentRestartRecoveryController } from "./agent-runner-restart-recovery.js";
 import { resolveFollowupCurrentMessageId } from "./agent-runner-utils.js";
 import { resolveTurnCommentaryProgressOwner } from "./commentary-progress-owner.js";
 import { requiresDurableToolResultDelivery } from "./dispatch-from-config.payloads.js";
 import type { AdmittedFollowupTurn, FollowupRunnerParams } from "./followup-turn-admission.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import { drainPendingToolTasks } from "./pending-tool-task-drain.js";
+import { admitFollowupRunLifecycle } from "./queue/lifecycle.js";
 import { recordReplyOperationAgentTurn } from "./reply-operation-run-state.js";
-import { hasReplyOperationExecutionStarted, replyRunRegistry } from "./reply-run-registry.js";
 import { captureReplyOperationSessionReader } from "./reply-run-registry.state.js";
 import { prepareReplyToolAuthority } from "./reply-tool-authority.js";
 import { resolveFollowupReplyExpectation } from "./source-reply-delivery-mode.js";
@@ -306,15 +307,47 @@ export async function executeFollowupTurn(params: {
       ? turn.preflightError
       : new Error(formatErrorMessage(turn.preflightError));
   }
+  const recorder = turn.queued.userTurnTranscriptRecorder;
+  // Keep ingress retryable through preparation; adoption transfers durable input custody.
+  const sourceMessage = await recorder?.resolveMessage();
+  turn.operation.abortSignal.throwIfAborted();
+  const sourceTurnId = resolveReplySourceTurnId({
+    sourceTurnId: sourceMessage?.idempotencyKey ?? turn.queued.sourceTurnId,
+    admissionRunId: turn.queued.messageId,
+    ingressProvider: turn.queued.run.messageProvider,
+    entry: turn.session.current(),
+  });
+  const recovery = (turn.restartRecovery = createReplyAgentRestartRecoveryController({
+    activeSessionStore: turn.sessionStore,
+    cfg: turn.config,
+    followupRun: turn.queued,
+    getActiveSessionEntry: turn.session.current,
+    opts: progressOpts,
+    replyOperation: turn.operation,
+    restartRecoverySourceTurnId: sourceTurnId,
+    runtimePolicySessionKey: turn.queued.run.runtimePolicySessionKey,
+    sessionCtx,
+    sessionKey: turn.session.kind === "session" ? turn.session.key : undefined,
+    setActiveSessionEntry: (entry) => turn.session.publish(entry),
+    storePath: turn.session.kind === "session" ? turn.session.storePath : undefined,
+  }));
+  let accepted = false;
   let execution: AgentTurnExecutionResult;
   const runStartedAt = Date.now();
-  if (turn.preflightFailurePayload) {
-    execution = {
-      runId: turn.runId,
-      outcome: { kind: "rejected", payload: turn.preflightFailurePayload },
-    };
-  } else {
-    try {
+  try {
+    const admission = await recovery.admitUserTurn(recorder);
+    accepted = true;
+    await admitFollowupRunLifecycle(turn.queued);
+    turn.operation.abortSignal.throwIfAborted();
+    setChannelSourceTurnId(sessionCtx, sourceTurnId);
+    if (admission === "duplicate-source") {
+      execution = { runId: turn.runId, outcome: { kind: "aborted", reason: "superseded" } };
+    } else if (turn.preflightFailurePayload) {
+      execution = {
+        runId: turn.runId,
+        outcome: { kind: "rejected", payload: turn.preflightFailurePayload },
+      };
+    } else {
       turn.queued.run.bootstrapUserProfileId = turn.queued.personalBootstrapEligible
         ? sessionPersonalProfileId(turn.session.current())
         : undefined;
@@ -361,6 +394,7 @@ export async function executeFollowupTurn(params: {
           getActiveSessionEntry: turn.session.current,
           activeSessionStore: turn.sessionStore,
           storePath: turn.session.kind === "session" ? turn.session.storePath : undefined,
+          isRestartRecoveryArmed: recovery.isArmed,
           resolvedVerboseLevel: currentVerboseLevel(),
           toolProgressDetail: defaults.toolProgressDetail,
           onCompactionNoticePayload: async (payload) => {
@@ -373,40 +407,29 @@ export async function executeFollowupTurn(params: {
             });
           },
         });
-      const recorder = turn.queued.userTurnTranscriptRecorder;
       // Queued execution outlives its ingress scope. Re-enter the exact source
       // custody after lazy collection binds it, so runtime appends consume all sources.
-      await recorder?.resolveMessage();
       turn.operation.abortSignal.throwIfAborted();
-      const sourceTurnId = resolveReplySourceTurnId({
-        sourceTurnId: turn.queued.sourceTurnId,
-        admissionRunId: turn.queued.messageId,
-        ingressProvider: turn.queued.run.messageProvider,
-        entry: turn.session.current(),
-      });
-      if (sourceTurnId) {
-        replyRunRegistry.bindSourceTurnId(turn.operation, sourceTurnId);
-        setChannelSourceTurnId(sessionCtx, sourceTurnId);
-      }
       execution = await withCurrentUserTurnInput(recorder, execute);
-    } catch (error) {
-      await drainPendingWork();
-      if (!hasReplyOperationExecutionStarted(turn.operation)) {
-        throw error;
-      }
-      turn.operation.fail("run_failed", error);
-      execution = {
-        runId: turn.runId,
-        outcome: {
-          kind: "rejected",
-          payload: buildTerminalAgentRunFailureReplyPayload({
-            isHeartbeat,
-            replyExpectation: terminalReplyExpectation,
-            visibleReplyDelivered,
-          }),
-        },
-      };
     }
+  } catch (error) {
+    await drainPendingWork();
+    if (!accepted || turn.operation.abortSignal.aborted) {
+      throw error;
+    }
+    // Input is already accepted. A setup failure must surface without replaying it.
+    turn.operation.fail("run_failed", error);
+    execution = {
+      runId: turn.runId,
+      outcome: {
+        kind: "rejected",
+        payload: buildTerminalAgentRunFailureReplyPayload({
+          isHeartbeat,
+          replyExpectation: terminalReplyExpectation,
+          visibleReplyDelivered,
+        }),
+      },
+    };
   }
   // Runner defaults may be newer; only the queued sources own this execution result.
   recordReplyOperationAgentTurn(
