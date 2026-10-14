@@ -238,7 +238,6 @@ export const databaseWorkerCoreTestFiles = [
   "src/auto-reply/reply/agent-runner-steer-adoption.worker.test.ts",
   "src/auto-reply/reply/followup-turn-execution.steering.test.ts",
   "src/auto-reply/reply/followup-turn-admission.test.ts",
-  "src/auto-reply/reply/followup-turn-execution.ingress.test.ts",
   "src/auto-reply/reply/queue.personal-bootstrap-overflow.test.ts",
   "src/auto-reply/reply/queue.authority.test.ts",
   "src/auto-reply/reply/queue.collect.test.ts",

@@ -543,12 +543,11 @@ async function runQueueSummaryDelivery(
         if (admitted) {
           return;
         }
+        admitted = true;
+        // Durable aggregate acceptance consumes every source even if one ingress ack fails.
+        consumeQueueSummaryDelivery(queue, delivery, false);
         await Promise.all(delivery.sources.map((source) => admitFollowupRunLifecycle(source)));
         cancellation.admit();
-        admitted = true;
-        // A multi-source summary is atomic once it owns the reply lane.
-        // Retire sibling ids while the latest source owns aggregate cancel.
-        consumeQueueSummaryDelivery(queue, delivery, false);
         const aggregateOwner = resolveAggregateOwner(delivery.sources);
         for (const source of delivery.sources) {
           if (source !== aggregateOwner) {
@@ -764,8 +763,8 @@ async function runSyntheticOverflowSummary(params: {
           turnAdoptionLifecycle: createAggregateLifecycle(
             params.sources,
             async () => {
-              await params.onAdmitted?.();
               admitted = true;
+              await params.onAdmitted?.();
             },
             () => {
               if (admitted) {
@@ -997,10 +996,10 @@ export function scheduleFollowupDrain(
             activeGroupItems.length > 1 ||
             activeGroupItems.some((item) => hasExclusiveTurnAdmission(item.turnAdoptionLifecycle));
           const admitGroupSources = async () => {
-            await Promise.all(activeGroupItems.map((item) => admitFollowupRunLifecycle(item)));
-            cancellation.admit();
             admitted = true;
             removeQueuedItemsByRef(queue.items, activeGroupItems);
+            await Promise.all(activeGroupItems.map((item) => admitFollowupRunLifecycle(item)));
+            cancellation.admit();
             for (const item of activeGroupItems) {
               if (item !== aggregateOwner) {
                 retireFollowupRunCancellation(item);

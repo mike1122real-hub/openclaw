@@ -1,11 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../../test/helpers/promise.js";
+import { createDeferred, withinTest } from "../../../test/helpers/promise.js";
+import {
+  IngressAdoptionLostError,
+  isIngressAdoptionLostError,
+} from "../../channels/message/ingress-drain-state.js";
 import {
   loadTranscriptEvents,
   replaceSessionEntry,
 } from "../../config/sessions/session-accessor.js";
+import { captureGatewayRootWorkReleaseObserver } from "../../process/gateway-work-admission.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
 import { useSessionStoreTempDirs } from "../../test-utils/session-state-cleanup.js";
@@ -26,7 +31,7 @@ import {
 } from "./queue.test-helpers.js";
 import { resolveFollowupDeliveryStorageKey } from "./queue/delivery-context.js";
 import { clearFollowupQueue, getExistingFollowupQueue } from "./queue/state.js";
-import type { QueuedFollowupReplyBatch } from "./queue/types.js";
+import { isFollowupRunAborted, type QueuedFollowupReplyBatch } from "./queue/types.js";
 import type { ReplyOperationRunState } from "./reply-operation-run-state.js";
 type InternalFollowupRun = FollowupRun & {
   currentTurnImagesPrepared?: true;
@@ -945,16 +950,11 @@ describe("followup queue collect routing", () => {
       const second = createRun({ prompt: "second" });
       second.turnAdoptionLifecycle = {
         admission: "exclusive",
-        onAdopted: vi
-          .fn<() => Promise<void>>()
-          .mockImplementationOnce(async () => {
-            events.push("second-rejected");
-            throw new Error("second admission failed");
-          })
-          .mockImplementationOnce(async () => {
-            events.push("second-admitted");
-          }),
+        onAdopted: vi.fn(async () => {
+          events.push("second-admitted");
+        }),
       };
+      let secondAttempts = 0;
       q.add(first);
       q.add(second);
       if (mode === "followup") {
@@ -969,6 +969,10 @@ describe("followup queue collect routing", () => {
         const label = run.prompt.includes("first") ? "first" : "second";
         events.push(`run:${label}`);
         try {
+          if (label === "second" && secondAttempts++ === 0) {
+            events.push("second-rejected");
+            throw new Error("second preparation failed");
+          }
           await admitFollowupRunLifecycle(run);
         } catch (error) {
           events.push(`error:${label}`);
@@ -992,7 +996,7 @@ describe("followup queue collect routing", () => {
         "model:second",
         ...(mode === "followup" ? ["live-followup"] : []),
       ]);
-      expect(second.turnAdoptionLifecycle.onAdopted).toHaveBeenCalledTimes(2);
+      expect(second.turnAdoptionLifecycle.onAdopted).toHaveBeenCalledOnce();
     },
   );
 
@@ -1010,6 +1014,79 @@ describe("followup queue collect routing", () => {
     });
     await q.done.promise;
   });
+
+  it.each(["collect", "overflow"] as const)(
+    "does not replay accepted %s sources after a sibling adoption times out",
+    async (mode, { signal }) => {
+      const q = createQueueCase({
+        mode: mode === "collect" ? "collect" : "followup",
+        cap: mode === "collect" ? 2 : 1,
+        debounceMs: 0,
+      });
+      const released = createDeferred();
+      const canceled = new AbortController();
+      const firstAdopted = vi.fn(async () => {});
+      const firstSettled = vi.fn();
+      const secondSettled = vi.fn();
+      const secondAdopted = vi.fn(async () => {
+        canceled.abort();
+        throw new IngressAdoptionLostError("guillotined");
+      });
+      for (const [prompt, onAdopted, onSettled, abortSignal] of [
+        ["first source", firstAdopted, firstSettled, undefined],
+        ["second source", secondAdopted, secondSettled, canceled.signal],
+      ] as const) {
+        q.add({
+          ...createRun({ prompt, originatingChannel: "webchat" }),
+          abortSignal,
+          turnAdoptionLifecycle: { admission: "cancel-only", onAdopted, onSettled },
+        });
+      }
+      if (mode === "overflow") {
+        q.add(createRun({ prompt: "live item", originatingChannel: "webchat" }));
+      }
+      const terminalErrors: unknown[] = [];
+      q.start(async (run) => {
+        if (q.calls.length === 0) {
+          const observeRelease = captureGatewayRootWorkReleaseObserver();
+          expect(observeRelease).toBeDefined();
+          observeRelease?.(() => released.resolve());
+        }
+        if (isFollowupRunAborted(run)) {
+          return;
+        }
+        q.calls.push(run);
+        try {
+          await admitFollowupRunLifecycle(run);
+        } catch (error) {
+          if (!isIngressAdoptionLostError(error)) {
+            throw error;
+          }
+          // Execution already owns the input and returns a terminal failure reply.
+          terminalErrors.push(error);
+        }
+        completeFollowupRunLifecycle(run);
+      });
+      try {
+        await withinTest(released.promise, signal);
+        expect(q.calls).toHaveLength(mode === "collect" ? 1 : 2);
+        expect(q.calls[0]?.prompt).toContain("second source");
+        if (mode === "overflow") {
+          expect(q.calls[1]?.prompt).toBe("live item");
+        }
+        expect(terminalErrors).toEqual([
+          expect.objectContaining({ name: "IngressAdoptionLostError", code: "guillotined" }),
+        ]);
+        expect(firstAdopted).toHaveBeenCalledOnce();
+        expect(secondAdopted).toHaveBeenCalledOnce();
+        expect(firstSettled).toHaveBeenCalledOnce();
+        expect(secondSettled).toHaveBeenCalledOnce();
+        expect(getExistingFollowupQueue(q.key)).toBeUndefined();
+      } finally {
+        clearFollowupQueue(q.key);
+      }
+    },
+  );
 
   it("retries survivors when an earlier source owns the sole pre-admission cancel signal", async () => {
     const q = createQueueCase({ mode: "collect", debounceMs: 0 }, 1);
