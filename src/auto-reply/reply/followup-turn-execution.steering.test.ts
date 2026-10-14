@@ -24,6 +24,7 @@ import {
   createReplyOperation,
   replyRunRegistry,
 } from "./reply-run-registry.js";
+import { createReplyRecoveryActorFixture } from "./restart-recovery-claim.test-support.js";
 import { readChannelSourceTurnId } from "./source-turn-id.js";
 
 const state = getFollowupTurnTestState();
@@ -37,7 +38,7 @@ describe("queued turn steering", () => {
       const root = tempDirs.make("openclaw-followup-steering-");
       const storePath = path.join(root, "sessions.json");
       const sessionKey = "agent:main:queued-steering";
-      const entry: SessionEntry = {
+      let entry: SessionEntry = {
         sessionId: "session",
         updatedAt: 1,
         restartRecoveryTerminalRunIds: ["previous-input"],
@@ -49,6 +50,14 @@ describe("queued turn steering", () => {
         turnKind: "queued_followup",
         resetTriggered: false,
       });
+      await using actor = createReplyRecoveryActorFixture({
+        agentId: "main",
+        sessionKey,
+        storePath,
+        operation,
+        getSessionId: () => operation.sessionId,
+      });
+      await actor.bind();
       const turn = createTurn({
         operation,
         session: {
@@ -56,8 +65,14 @@ describe("queued turn steering", () => {
           key: sessionKey,
           storePath,
           current: () => entry,
-          publish: () => {},
-          adopt: () => {},
+          publish: (next) => {
+            if (next) {
+              entry = next;
+            }
+          },
+          adopt: (next) => {
+            entry = next;
+          },
         },
       });
       turn.queued.messageId = "queued-human-input";
@@ -79,6 +94,16 @@ describe("queued turn steering", () => {
         senderIsOwner: false,
       };
       const sourceTurnId = source === "gateway" ? "queued-human-input" : "original-queued-input";
+      turn.queued.userTurnTranscriptRecorder = createUserTurnTranscriptRecorder({
+        input: { text: turn.queued.prompt, idempotencyKey: sourceTurnId },
+        target: {
+          agentId: "main",
+          sessionId: entry.sessionId,
+          sessionKey,
+          storePath,
+          sessionEntry: entry,
+        },
+      });
       if (source !== "gateway") {
         turn.queued.sourceTurnId = sourceTurnId;
       }
@@ -165,8 +190,6 @@ describe("queued turn steering", () => {
           ).toBeDefined();
           await expect(attempt!.outcome).resolves.toMatchObject({ status: "accepted" });
         }
-        expect(queueMessage.mock.calls.map(([text]) => text)).toEqual(steeringMessages);
-        expect(replyRunRegistry.getSourceTurnId(sessionKey)).toBe(sourceTurnId);
         return {
           runId: "followup-execution",
           outcome: { kind: "rejected", payload: { text: "done" } },
@@ -183,8 +206,10 @@ describe("queued turn steering", () => {
           onToolResult: vi.fn(async () => {}),
           onCompactionNoticePayload: vi.fn(async () => {}),
         });
+        expect(queueMessage.mock.calls.map(([text]) => text)).toEqual(steeringMessages);
+        expect(replyRunRegistry.getSourceTurnId(sessionKey)).toBe(sourceTurnId);
       } finally {
-        operation.complete();
+        await turn.restartRecovery?.clear();
       }
     },
   );

@@ -1,3 +1,5 @@
+import { isAgentRunDirectAbortReason } from "../../agents/run-termination.js";
+import { isIngressAdoptionLostError } from "../../channels/message/ingress-drain-state.js";
 import { settleProgressVisibilityCallbackResult } from "../../channels/progress-visibility.js";
 import { sessionPersonalProfileId } from "../../config/sessions/session-entry-provenance.js";
 import { logVerbose } from "../../globals.js";
@@ -415,9 +417,14 @@ export async function executeFollowupTurn(params: {
     }
   } catch (error) {
     await drainPendingWork();
-    if (!accepted || turn.operation.abortSignal.aborted) {
+    const ingressTimedOut =
+      isIngressAdoptionLostError(error) &&
+      error.code === "guillotined" &&
+      !isAgentRunDirectAbortReason(turn.operation.abortSignal.reason);
+    if (!accepted || (turn.operation.abortSignal.aborted && !ingressTimedOut)) {
       throw error;
     }
+    turn.queued.operatorAuthority?.assertCurrent();
     // Input is already accepted. A setup failure must surface without replaying it.
     turn.operation.fail("run_failed", error);
     execution = {

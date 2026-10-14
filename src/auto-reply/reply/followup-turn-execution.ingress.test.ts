@@ -28,6 +28,7 @@ import {
 import { enqueueFollowupRun, isFollowupRunAborted, scheduleFollowupDrain } from "./queue.js";
 import { clearFollowupQueueForTest, createQueueTestRun } from "./queue.test-helpers.js";
 import { createReplyOperation } from "./reply-run-registry.js";
+import { retainReplyOperationUntilComplete } from "./reply-run-registry.state.js";
 import { createReplyRecoveryActorFixture } from "./restart-recovery-claim.test-support.js";
 
 beforeEach(() => {
@@ -159,9 +160,16 @@ describe("queued ingress acceptance", () => {
     },
   );
 
-  it.each(["followup-collect", "followup-overflow"])(
-    "persists %s custody before completing ingress and reports a setup failure once",
-    async (sourceKind) => {
+  it.each(
+    ["followup-collect", "followup-overflow"].flatMap((sourceKind) =>
+      ["setup-failure", "adoption-timeout", "user-abort"].map((failure) => ({
+        sourceKind,
+        failure,
+      })),
+    ),
+  )(
+    "persists $sourceKind custody before ingress completion and handles $failure without replay",
+    async ({ sourceKind, failure }) => {
       await withOpenClawTestState({ label: "queued-ingress-acceptance" }, async (state) => {
         setRuntimeConfigSnapshot({});
         const target = {
@@ -172,7 +180,13 @@ describe("queued ingress acceptance", () => {
         };
         let entry: SessionEntry = { sessionId: target.sessionId, updatedAt: 1 };
         await replaceSessionEntry(target, entry);
-        const operation = createReplyOperation({ ...target, resetTriggered: false });
+        const upstreamAbort = new AbortController();
+        const operation = createReplyOperation({
+          ...target,
+          resetTriggered: false,
+          upstreamAbortSignal: upstreamAbort.signal,
+        });
+        retainReplyOperationUntilComplete(operation);
         await using actor = createReplyRecoveryActorFixture({
           ...target,
           operation,
@@ -216,6 +230,10 @@ describe("queued ingress acceptance", () => {
           Object.assign(new Error("no space left on device"), { code: "ENOSPC" }),
         );
         const queue = createTestIngressQueue(state.stateDir);
+        const timedOut = failure !== "setup-failure";
+        const ingressFailed = timedOut
+          ? observeChannelIngressQueueWrite(queue, "fail", "source-message")
+          : undefined;
         const replies: ReplyPayload[] = [];
         const adopted = vi.fn(async () => {
           expect(recorder.hasPersisted()).toBe(true);
@@ -239,11 +257,29 @@ describe("queued ingress acceptance", () => {
         });
         const drain = createChannelIngressDrain({
           queue,
+          adoptionStallTimeoutMs: 90,
+          retryPolicy: { maxAttempts: 1, deadLetterMinAgeMs: 0 },
           dispatchClaimedEvent: async (_event, lifecycle) => {
+            lifecycle.abortSignal.addEventListener(
+              "abort",
+              () => upstreamAbort.abort(lifecycle.abortSignal.reason),
+              { once: true },
+            );
+            turn.queued.abortSignal = lifecycle.abortSignal;
             turn.queued.turnAdoptionLifecycle = bindIngressLifecycleToReplyOptions({
               ...lifecycle,
               onAdopted: async () => {
                 await adopted();
+                if (timedOut) {
+                  if (failure === "user-abort") {
+                    expect(operation.abortByUser()).toBe(true);
+                  }
+                  await vi.advanceTimersByTimeAsync(100);
+                  expect(operation.abortSignal.aborted).toBe(true);
+                  expect(
+                    loadSessionEntry(target)?.restartRecoveryTerminalRunIds ?? [],
+                  ).not.toContain(sourceId);
+                }
                 await lifecycle.onAdopted();
               },
             }).turnAdoptionLifecycle;
@@ -267,17 +303,22 @@ describe("queued ingress acceptance", () => {
           expect(await drain.drainOnce()).toEqual({ started: 1 });
           await drain.waitForIdle();
           expect(adopted).toHaveBeenCalledOnce();
-          expect(execute).toHaveBeenCalledOnce();
-          expect(replies).toEqual([
-            expect.objectContaining({ text: expect.stringContaining("⚠️") }),
-          ]);
+          expect(execute).toHaveBeenCalledTimes(timedOut ? 0 : 1);
+          expect(replies).toEqual(
+            failure === "user-abort"
+              ? []
+              : [expect.objectContaining({ text: expect.stringContaining("⚠️") })],
+          );
+          if (ingressFailed) {
+            await expect(ingressFailed).resolves.toBe(true);
+          }
           expect(
             await queue.enqueue("source-message", { text: "queued user message" }),
-          ).toMatchObject({ kind: "completed" });
+          ).toMatchObject({ kind: timedOut ? "failed" : "completed" });
           expect(await drain.drainOnce()).toEqual({ started: 0 });
           await drain.waitForIdle();
-          expect(execute).toHaveBeenCalledOnce();
-          expect(replies).toHaveLength(1);
+          expect(execute).toHaveBeenCalledTimes(timedOut ? 0 : 1);
+          expect(replies).toHaveLength(failure === "user-abort" ? 0 : 1);
         } finally {
           drain.dispose();
           await turn.restartRecovery?.clear();
