@@ -305,24 +305,57 @@ describe("SessionsCard", () => {
     expect(onSelectSession).toHaveBeenLastCalledWith("Alpha", true, ["Beta", "Alpha"]);
   });
 
-  it("refreshes duration metadata when the locale changes without replacing a row", async () => {
+  it("keeps metadata and unavailable usage labels localized without replacing a row", async () => {
     const restoreI18n = captureI18nStateForTesting();
     const entry = session("Alpha");
-    entry.usage!.durationMs = 60_000;
+    const sessionUsage = entry.usage!;
+    sessionUsage.durationMs = 60_000;
+    sessionUsage.usageReport = { state: "unavailable" };
+    const base = createUsageProps();
+    const [display, setDisplay] = createSignal(base.display);
+    const usage = {
+      ...base,
+      get display() {
+        return display();
+      },
+    };
+    const overview = createUsageOverview({
+      total: 1,
+      tableSessionCount: 1,
+      tableTotals: {
+        tokens: sessionUsage.totalTokens,
+        cost: sessionUsage.totalCost,
+        errors: 0,
+        usageReport: sessionUsage.usageReport,
+      },
+    });
     const container = document.createElement("div");
     try {
       await i18n.setLocale("en");
-      mountSolid(
-        () => SessionsCard({ sessions: [entry], usage: createUsageProps(), totalSessions: 1 }),
-        { container },
-      );
+      mountSolid(() => SessionsCard({ sessions: [entry], usage, overview, totalSessions: 1 }), {
+        container,
+      });
       flush();
       const row = container.querySelector(".session-bar-row");
+      const value = () => row?.querySelector(".session-bar-value")?.textContent;
+      const average = () => container.querySelector(".sessions-card-stats > span")?.textContent;
       expect(row?.querySelector(".session-bar-meta")?.textContent).toContain("dur:1m");
+      expect(value()).toBe("unknown");
+      expect(average()).toContain("unknown");
       await i18n.setLocale("de");
       flush();
       expect(container.querySelector(".session-bar-row")).toBe(row);
       expect(row?.querySelector(".session-bar-meta")?.textContent).toContain("dur:1 Min.");
+      expect(value()).toBe("unbekannt");
+      expect(average()).toContain("unbekannt");
+      setDisplay({ ...base.display, chartMode: "cost" });
+      flush();
+      expect(value()).toBe("unbekannt");
+      await i18n.setLocale("en");
+      flush();
+      expect(container.querySelector(".session-bar-row")).toBe(row);
+      expect(value()).toBe("unknown");
+      expect(average()).toContain("unknown");
     } finally {
       await restoreI18n();
     }

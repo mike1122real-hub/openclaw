@@ -37,11 +37,15 @@ export function SessionsCard(props: {
 }) {
   const isTokenMode = createMemo(() => props.usage.display.chartMode === "tokens");
   const selectedRows = () => props.usage.data.overview?.selectedRows ?? [];
-  const average = createMemo(() => {
+  const averageLabel = createMemo(() => {
+    i18nRevision();
     const count = props.overview?.tableSessionCount ?? 0;
     const totals = props.overview?.tableTotals;
     const value = (isTokenMode() ? totals?.tokens : totals?.cost) ?? 0;
-    return count ? value / count : 0;
+    const average = count ? value / count : 0;
+    return isTokenMode()
+      ? formatUsageTokens(average, totals?.usageReport)
+      : formatAnalysisCost(average, totals?.usageReport);
   });
   const sortDirectionLabel = () =>
     t(
@@ -63,10 +67,7 @@ export function SessionsCard(props: {
         <div class="sessions-card-meta">
           <div class="sessions-card-stats">
             <span>
-              {isTokenMode()
-                ? formatUsageTokens(average(), props.overview?.tableTotals.usageReport)
-                : formatAnalysisCost(average(), props.overview?.tableTotals.usageReport)}{" "}
-              {t("usage.sessions.avg")}
+              {averageLabel()} {t("usage.sessions.avg")}
             </span>
             <span>
               {props.overview?.tableTotals.errors ?? 0}{" "}
@@ -226,17 +227,20 @@ function SessionRows(props: {
           i18nRevision();
           return buildSessionMeta(session());
         });
+        const valueLabel = createMemo(() => {
+          i18nRevision();
+          const usage = session().usage;
+          return props.isTokenMode
+            ? formatUsageTokens(usage?.totalTokens ?? 0, usage?.usageReport)
+            : formatAnalysisCost(usage?.totalCost ?? 0, usage?.usageReport);
+        });
         return (
           <SessionBarRow
             sessionKey={session().key}
             displayLabel={label()}
             meta={meta()}
             agentId={session().agentId}
-            valueLabel={
-              props.isTokenMode
-                ? formatUsageTokens(session().usage?.totalTokens ?? 0, session().usage?.usageReport)
-                : formatAnalysisCost(session().usage?.totalCost ?? 0, session().usage?.usageReport)
-            }
+            valueLabel={valueLabel()}
             isSelected={props.selectedSessions.includes(session().key)}
             onSelect={(event) => props.onSelect(session().key, event.shiftKey, orderedKeys())}
           />
