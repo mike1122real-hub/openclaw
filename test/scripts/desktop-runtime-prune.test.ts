@@ -60,8 +60,12 @@ it("removes audited development files while preserving runtime data and every Ma
   symlinkSync(outside, path.join(root, "linked-package"), "junction");
 
   expect(pruneDesktopRuntime(root).files).toBe(removed.length);
-  for (const file of removed) expect(existsSync(path.join(root, file)), file).toBe(false);
-  for (const file of retained) expect(readFileSync(path.join(root, file), "utf8"), file).toBe(file);
+  for (const file of removed) {
+    expect(existsSync(path.join(root, file)), file).toBe(false);
+  }
+  for (const file of retained) {
+    expect(readFileSync(path.join(root, file), "utf8"), file).toBe(file);
+  }
   expect(readFileSync(path.join(outside, "index.d.ts"), "utf8")).toBe("outside");
   expect(pruneDesktopRuntime(root)).toEqual({ files: 0, bytes: 0 });
 });

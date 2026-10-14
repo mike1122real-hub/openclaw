@@ -38,13 +38,19 @@ export function pruneDesktopRuntime(modules) {
   const within = (relative, trees) => trees.some((tree) => relative.startsWith(`${tree}/`));
   const packages = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === ".bin") continue;
+      if (!entry.isDirectory() || entry.name === ".bin") {
+        continue;
+      }
       const child = path.join(directory, entry.name);
-      if (entry.name.startsWith("@")) packages(child);
-      else visit(child, child);
+      if (entry.name.startsWith("@")) {
+        packages(child);
+      } else {
+        visit(child, child);
+      }
     }
   };
-  const visit = (directory, packageRoot, rules) => {
+  const visit = (directory, packageRoot, inheritedRules) => {
+    let rules = inheritedRules;
     if (directory === packageRoot) {
       const manifest = path.join(packageRoot, "package.json");
       if (fs.existsSync(manifest)) {
@@ -59,18 +65,26 @@ export function pruneDesktopRuntime(modules) {
       const file = path.join(directory, entry.name);
       const relative = path.relative(packageRoot, file).split(path.sep).join("/");
       // Plugins own their assets, including sources and examples used as data.
-      if (relative === "extensions" || relative === "dist/extensions") continue;
+      if (relative === "extensions" || relative === "dist/extensions") {
+        continue;
+      }
       if (entry.isDirectory()) {
-        if (entry.name === "node_modules") packages(file);
-        else visit(file, packageRoot, rules);
-        if (fs.readdirSync(file).length === 0) fs.rmdirSync(file);
+        if (entry.name === "node_modules") {
+          packages(file);
+        } else {
+          visit(file, packageRoot, rules);
+        }
+        if (fs.readdirSync(file).length === 0) {
+          fs.rmdirSync(file);
+        }
       } else if (entry.isFile()) {
         if (
           /\.md$/i.test(entry.name) ||
           entry.name === "package.json" ||
           /^(?:(?:un)?licen[cs]e|notice|copying|copyright|authors)(?:[.-]|$)/i.test(entry.name)
-        )
+        ) {
           continue;
+        }
         // Preserve executable maps for diagnostics/debuggers. Declaration maps
         // have no runtime consumer; JS, native code and other assets stay intact.
         const declaration = /\.d\.(?:ts|mts|cts)(?:\.map)?$/.test(entry.name);
