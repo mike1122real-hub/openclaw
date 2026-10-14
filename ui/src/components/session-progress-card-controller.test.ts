@@ -1,12 +1,38 @@
 import type { ProgressCardGetParams } from "@openclaw/gateway-protocol";
-import { html, LitElement } from "lit";
+import { createMemo } from "solid-js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { ApplicationGateway } from "../app/gateway.ts";
 import { sessionProgressCardsForGateway } from "../lib/session-progress-cards.ts";
+import { useSolidControllerHost, type SolidControllerHost } from "../lit/solid-controller-host.ts";
 import { createApplicationGateway } from "../test-helpers/application-context.ts";
 import { createTestGatewayClient } from "../test-helpers/gateway-client.ts";
 import { gatewayHelloForMethods } from "../test-helpers/gateway-methods.ts";
+import { mountSolid } from "../test-helpers/mount-solid.ts";
+import { flush, waitForSolid } from "../test-helpers/solid-settle.ts";
 import { SessionProgressCardController } from "./session-progress-card-controller.ts";
+
+function mountProgress(
+  gateway: ApplicationGateway,
+  target: () => ProgressCardGetParams | null | undefined,
+) {
+  let progress!: SessionProgressCardController;
+  let host!: SolidControllerHost;
+  const redraw = vi.fn(
+    () =>
+      `${progress.card?.markdown ?? "Loading"} ${progress.error ?? ""} ${progress.refreshState ?? ""}`,
+  );
+  const view = mountSolid(() => {
+    const owner = useSolidControllerHost();
+    host = owner.host;
+    progress = new SessionProgressCardController(host, { gateway: () => gateway, target });
+    return createMemo(() => {
+      owner.revision();
+      return redraw();
+    });
+  });
+  flush();
+  return { ...view, progress, host, redraw };
+}
 
 describe("SessionProgressCardController", () => {
   it("redraws only the watched progress presentation while unrelated sessions change", async () => {
@@ -47,43 +73,31 @@ describe("SessionProgressCardController", () => {
       lastError: null,
       lastErrorCode: null,
     });
-    class ProgressHost extends LitElement {
-      target: ProgressCardGetParams | undefined;
-      readonly progress = new SessionProgressCardController(this, {
-        gateway: () => gateway,
-        target: () => this.target,
-      });
-      override render() {
-        return html`${this.progress.card?.markdown ?? "Loading"} ${this.progress.error}
-        ${this.progress.refreshState}`;
-      }
-    }
-    customElements.define("test-progress-scoped-render", ProgressHost);
-    const host = new ProgressHost();
-    const inactive = new ProgressHost();
-    const target = { sessionKey: "agent:main:visible-progress" };
-    host.target = target;
-    document.body.append(host, inactive);
+    let target = { sessionKey: "agent:main:visible-progress" };
+    const host = mountProgress(gateway, () => target);
+    const inactive = mountProgress(gateway, () => undefined);
     const store = sessionProgressCardsForGateway(gateway);
     const notified = vi.fn();
     const stop = store.subscribe(notified);
     onTestFinished(() => {
-      host.remove();
-      inactive.remove();
+      host.unmount();
+      inactive.unmount();
       stop();
       vi.restoreAllMocks();
     });
     await store.load(target);
-    await Promise.all([host.updateComplete, inactive.updateComplete]);
-    const redraw = vi.spyOn(host, "render");
-    const inactiveRedraw = vi.spyOn(inactive, "render");
+    flush();
+    const { redraw } = host;
+    const { redraw: inactiveRedraw } = inactive;
+    redraw.mockClear();
+    inactiveRedraw.mockClear();
     notified.mockClear();
     publishEvent({
       type: "event",
       event: "sessions.changed",
       payload: { sessionKey: "agent:main:unrelated", reason: "delete" },
     });
-    await Promise.all([host.updateComplete, inactive.updateComplete]);
+    flush();
     expect.soft(notified).not.toHaveBeenCalled();
     expect.soft(redraw).not.toHaveBeenCalled();
     notified.mockClear();
@@ -91,7 +105,7 @@ describe("SessionProgressCardController", () => {
     inactiveRedraw.mockClear();
 
     await store.load({ sessionKey: "agent:main:other-progress" });
-    await Promise.all([host.updateComplete, inactive.updateComplete]);
+    flush();
     expect(notified).toHaveBeenCalledOnce();
     expect.soft(redraw).not.toHaveBeenCalled();
     expect.soft(inactiveRedraw).not.toHaveBeenCalled();
@@ -103,16 +117,16 @@ describe("SessionProgressCardController", () => {
       payload: { sessionKey: target.sessionKey, revision },
     });
     await store.load(target);
-    await host.updateComplete;
-    expect(host.shadowRoot?.textContent).toContain("visible-progress revision 2");
+    flush();
+    expect(host.container.textContent).toContain("visible-progress revision 2");
 
     const card = host.progress.card;
     if (!card) {
       throw new Error("Expected the displayed progress card");
     }
     host.progress.refresh(card);
-    await host.updateComplete;
-    expect(host.shadowRoot?.textContent).toContain("pending");
+    flush();
+    expect(host.container.textContent).toContain("pending");
     revision = 3;
     publishEvent({
       type: "event",
@@ -120,8 +134,8 @@ describe("SessionProgressCardController", () => {
       payload: { sessionKey: target.sessionKey, revision },
     });
     await store.load(target);
-    await host.updateComplete;
-    expect(host.shadowRoot?.textContent).toContain("updated");
+    flush();
+    expect(host.container.textContent).toContain("updated");
 
     readError = new Error("Read unavailable");
     publishEvent({
@@ -130,16 +144,16 @@ describe("SessionProgressCardController", () => {
       payload: { sessionKey: target.sessionKey, revision: 4 },
     });
     await expect(store.load(target)).rejects.toThrow("Read unavailable");
-    await host.updateComplete;
-    expect(host.shadowRoot?.textContent).toContain("unavailable");
+    flush();
+    expect(host.container.textContent).toContain("unavailable");
 
     readError = undefined;
-    host.target = { sessionKey: "agent:main:selected-progress" };
-    host.requestUpdate();
-    await host.updateComplete;
-    await store.load(host.target);
-    await host.updateComplete;
-    expect(host.shadowRoot?.textContent).toContain("selected-progress revision 3");
+    target = { sessionKey: "agent:main:selected-progress" };
+    host.host.requestUpdate();
+    flush();
+    await store.load(target);
+    flush();
+    expect(host.container.textContent).toContain("selected-progress revision 3");
     expect(host.progress.error).toBeUndefined();
   });
 
@@ -161,18 +175,11 @@ describe("SessionProgressCardController", () => {
         subscribeEvents: () => () => undefined,
       } as unknown as ApplicationGateway;
       let admitted = true;
-      class ProgressHost extends LitElement {
-        readonly progress = new SessionProgressCardController(this, {
-          gateway: () => gateway,
-          target: () => (admitted ? { sessionKey: "agent:main:connection-progress" } : null),
-        });
-      }
-      customElements.define(`test-progress-reconnect-${replaceClient}`, ProgressHost);
-      const host = new ProgressHost();
-      onTestFinished(() => host.remove());
-      document.body.append(host);
-      await host.updateComplete;
-      await vi.waitFor(() => expect(host.progress.loading).toBe(false));
+      const host = mountProgress(gateway, () =>
+        admitted ? { sessionKey: "agent:main:connection-progress" } : null,
+      );
+      onTestFinished(host.unmount);
+      await waitForSolid(() => expect(host.progress.loading).toBe(false));
       expect(request).toHaveBeenCalledTimes(1);
 
       if (replaceClient) {
@@ -188,20 +195,20 @@ describe("SessionProgressCardController", () => {
       for (const listener of snapshots) {
         listener(gateway.snapshot);
       }
-      // The new history is still pending; no Lit update has had a chance to run.
+      // The new history is still pending; the Solid owner has not committed the update.
       expect(request).toHaveBeenCalledTimes(1);
       admitted = false;
-      await host.updateComplete;
+      flush();
       admitted = true;
-      host.requestUpdate();
-      await host.updateComplete;
-      await vi.waitFor(() => expect(host.progress.loading).toBe(false));
+      host.host.requestUpdate();
+      flush();
+      await waitForSolid(() => expect(host.progress.loading).toBe(false));
       expect(request).toHaveBeenCalledTimes(2);
     },
   );
 
   it.each([true, false])(
-    "keeps queued updates detached and reconnects once (session target: %s)",
+    "keeps queued updates disposed and watches once per mount (session target: %s)",
     async (hasTarget) => {
       const target = hasTarget ? { sessionKey: "agent:main:progress-lifecycle" } : null;
       const request = vi.fn().mockResolvedValue({ card: null });
@@ -224,38 +231,25 @@ describe("SessionProgressCardController", () => {
       const store = sessionProgressCardsForGateway(gateway);
       const subscribe = vi.spyOn(store, "subscribe");
       const watch = vi.spyOn(store, "watch");
-      class ProgressHost extends LitElement {
-        readonly progress = new SessionProgressCardController(this, {
-          gateway: () => gateway,
-          target: () => target,
-        });
-      }
-      customElements.define(`test-progress-controller-${hasTarget}`, ProgressHost);
-      const host = new ProgressHost();
-      onTestFinished(() => {
-        host.remove();
-        vi.restoreAllMocks();
-      });
+      onTestFinished(() => vi.restoreAllMocks());
 
       for (let connections = 1; connections <= 2; connections += 1) {
-        document.body.append(host);
-        await host.updateComplete;
+        const host = mountProgress(gateway, () => target);
         if (target) {
           await store.load(target);
-          await host.updateComplete;
+          flush();
         }
         expect(subscribe).toHaveBeenCalledTimes(connections);
         expect(watch).toHaveBeenCalledTimes(hasTarget ? connections : 0);
         expect(request).toHaveBeenCalledTimes(hasTarget ? connections : 0);
         expect(active).toEqual({ snapshots: 1, events: 1 });
 
-        // Lit still flushes this update after disconnectedCallback has released the store.
-        host.requestUpdate();
-        expect(host.isUpdatePending).toBe(true);
-        host.remove();
+        // Disposal must release the watch before a queued update commits.
+        host.host.requestUpdate();
+        host.unmount();
         expect(active).toEqual({ snapshots: 0, events: 0 });
-        await host.updateComplete;
-        expect(host.isConnected).toBe(false);
+        flush();
+        expect(host.container.isConnected).toBe(false);
         expect(active).toEqual({ snapshots: 0, events: 0 });
         expect(subscribe).toHaveBeenCalledTimes(connections);
         expect(watch).toHaveBeenCalledTimes(hasTarget ? connections : 0);
