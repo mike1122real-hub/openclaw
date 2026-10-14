@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { EngineConnection } from "../infra/sql-connection.js";
 import { runSqliteDeferredTransactionSync } from "../infra/sqlite-transaction.js";
 import { getSqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
 import { readDefaultProactiveJobReceiptInDatabase } from "./proactive-job-receipt.kernel.js";
@@ -8,7 +8,7 @@ import { resolveCronJobsStorePathInDatabase } from "./store/paths.js";
 import { loadCronRows, loadedCronStoreFromRows } from "./store/row-codec.js";
 
 function readReceipts(
-  db: DatabaseSync,
+  db: EngineConnection,
   input: { storePath: string | undefined; agentIds: string[] },
 ) {
   const storePath = resolveCronJobsStorePathInDatabase(
@@ -62,6 +62,6 @@ export const proactiveJobReceiptReadOperations = {
 } satisfies {
   [Type in keyof ProactiveJobReceiptReadOperations]: (
     input: ProactiveJobReceiptReadOperations[Type]["input"],
-    db: DatabaseSync,
+    db: EngineConnection,
   ) => ProactiveJobReceiptReadOperations[Type]["output"];
 };

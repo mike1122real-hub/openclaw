@@ -105,7 +105,7 @@ function captureReceipt(
     writeRevision:
       revision === undefined
         ? undefined
-        : readSqliteDatabasePendingWriteToken(db) === undefined
+        : readSqliteDatabasePendingWriteToken(sqlPublicationAnchor(db)) === undefined
           ? revision
           : (revision + 1) | 0,
   };

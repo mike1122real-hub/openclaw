@@ -1,4 +1,4 @@
-import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
 import type { Selectable } from "kysely";
 import { z } from "zod";
@@ -9,6 +9,7 @@ import { createTrustedCronScheduledToolPolicy } from "../cron/scheduled-tool-pol
 import { applyDefaultCronToolsAllow } from "../cron/tools-allow.js";
 import type { CronJob } from "../cron/types.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
+import type { EngineConnection } from "../infra/sql-connection.js";
 import { coerceRequiredSqliteNumber as sqliteNumber } from "../infra/sqlite-number.js";
 import type { DB } from "../state/openclaw-state-db.generated.js";
 import {
@@ -88,7 +89,7 @@ function refToRow(ref: PersistedClawCronRef | PersistedClawHeartbeatRef): CronRe
 }
 
 function readClawCronRows(
-  db: DatabaseSync,
+  db: EngineConnection,
   agentId: string,
   selection: { kind: "ordinary" } | { kind: "declaration"; manifestId: string },
 ): CronRefRow[] {
@@ -419,7 +420,7 @@ export function readClawCronRefs(
 }
 
 export function readClawCronRefsInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   agentId: string,
 ): PersistedClawCronRef[] {
   const rows = readClawCronRows(db, agentId, { kind: "ordinary" });
@@ -489,7 +490,7 @@ const ClawHeartbeatRefJobSchema = z
   .strict();
 
 export function readClawHeartbeatRefInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   agentId: string,
 ): PersistedClawHeartbeatRef | undefined {
   const row = readClawCronRows(db, agentId, {

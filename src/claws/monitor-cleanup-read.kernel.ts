@@ -1,9 +1,9 @@
-import type { DatabaseSync } from "node:sqlite";
 import { tryResolveCronJobEffectiveAgentId } from "../cron/agent-id.js";
 import { resolveCronJobConfigRevision } from "../cron/config-revision.js";
 import { loadedCronStoreFromRows } from "../cron/store/row-codec.js";
 import type { CronJobRow } from "../cron/store/schema.js";
 import { compileSqliteQueryBindings, getNodeSqliteKysely } from "../infra/kysely-sync.js";
+import type { EngineConnection } from "../infra/sql-connection.js";
 import { readAgentDeletionJournalInDatabase } from "../state/agent-deletion-journal.js";
 import type { DB } from "../state/openclaw-state-db.generated.js";
 import { readClawCronRefsInDatabase } from "./cron.js";
@@ -16,7 +16,7 @@ import {
 import { readClawInstallRecordFromDatabase } from "./provenance-read.kernel.js";
 
 export function readAttachedCronJobsInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   agentId: string,
   defaultAgentId?: string,
 ): AttachedCronJob[] {
@@ -66,7 +66,7 @@ export function readAttachedCronJobsInDatabase(
 
 /** One admitted snapshot binds removal ownership to the exact attached definitions and scratch. */
 export function readClawMonitorCleanupSnapshotInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   input: { agentId: string; storePath: string; defaultAgentId?: string },
 ): ClawMonitorCleanupSnapshot {
   const portable = readPortableHeartbeatStateInDatabase(db, input.agentId, input.storePath);

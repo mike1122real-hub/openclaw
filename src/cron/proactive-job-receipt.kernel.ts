@@ -1,6 +1,6 @@
 /** Durable provisioning/cutover identity; no session or runner imports. */
-import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import type { EngineConnection } from "../infra/sql-connection.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { updateConfigMachineStateInDatabase } from "../state/config-machine-state-write.js";
 import { readConfigMachineStateRowInDatabase } from "../state/config-machine-state.js";
@@ -37,7 +37,7 @@ function defaultProactiveJobReceiptKey(
 }
 
 export function readDefaultProactiveJobReceiptInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   storePath: string,
   agentId: string,
 ): DefaultProactiveJobReceipt | undefined {
@@ -50,7 +50,7 @@ export function readDefaultProactiveJobReceiptInDatabase(
 
 /** Doctor may adopt an existing job; keep this receipt even after the job is deleted. */
 export function recordDefaultProactiveJobInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   storePath: string,
   agentId: string,
   jobId: string,
@@ -75,7 +75,7 @@ export function recordDefaultProactiveJobInDatabase(
 
 /** Converted tasks share the agent's one cutover; recording identity does not alter job bytes. */
 export function recordConvertedProactiveJobInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   storePath: string,
   agentId: string,
   jobId: string,

@@ -1,7 +1,7 @@
 import path from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { expandHomePrefix } from "../../infra/home-dir.js";
+import type { EngineConnection } from "../../infra/sql-connection.js";
 import { resolveConfigDir } from "../../utils.js";
 import {
   readCronStoreStatePath,
@@ -29,7 +29,7 @@ export function resolveCronJobsStorePath(
 
 /** Resolve the selected partition on the caller's admitted database connection. */
 export function resolveCronJobsStorePathInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   storePath: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): string {

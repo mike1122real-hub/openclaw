@@ -1,5 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
 import { resolveCronJobsStorePathInDatabase } from "../cron/store/paths.js";
+import type { EngineConnection } from "../infra/sql-connection.js";
 import { runSqliteDeferredTransactionSync } from "../infra/sqlite-transaction.js";
 import { getSqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
 import { readClawMonitorCleanupSnapshotInDatabase } from "./monitor-cleanup-read.kernel.js";
@@ -31,6 +31,6 @@ export const clawMonitorCleanupReadOperations = {
 } satisfies {
   [Key in keyof ClawMonitorCleanupReadOperations]: (
     input: ClawMonitorCleanupReadOperations[Key]["input"],
-    db: DatabaseSync,
+    db: EngineConnection,
   ) => ClawMonitorCleanupReadOperations[Key]["output"];
 };

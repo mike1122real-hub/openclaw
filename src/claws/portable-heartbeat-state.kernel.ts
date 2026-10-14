@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import { resolveCronJobConfigRevision } from "../cron/config-revision.js";
 import { readDefaultProactiveJobReceiptInDatabase } from "../cron/proactive-job-receipt.kernel.js";
@@ -7,12 +6,13 @@ import { hashCronScratchSource } from "../cron/scratch-store.js";
 import { cronStoreKey } from "../cron/store/key.js";
 import { loadCronRows, loadedCronStoreFromRows } from "../cron/store/row-codec.js";
 import { loadCronRuntimeAuthorities } from "../cron/store/runtime-authority-store.js";
+import type { EngineConnection } from "../infra/sql-connection.js";
 import { readClawHeartbeatRefInDatabase } from "./cron.js";
 import { digestClawValue } from "./digest.js";
 import type { PortableHeartbeatState } from "./portable-heartbeat-state.types.js";
 
 export function readPortableHeartbeatStateInDatabase(
-  db: DatabaseSync,
+  db: EngineConnection,
   agentId: string,
   storePath: string,
 ): PortableHeartbeatState {

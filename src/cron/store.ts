@@ -98,7 +98,7 @@ export function subscribeCronJobsStoreMutations(
 }
 
 /** Explicit provisioning publishes after the outer commit; runtime saves only invalidate revisions. */
-export function publishCronJobsStoreMutation(storePath: string, db?: DatabaseSync): void {
+export function publishCronJobsStoreMutation(storePath: string, db?: EngineConnection): void {
   const storeKey = cronStoreKey(storePath);
   const publish = () => {
     noteCronJobsStoreCommit(storeKey);
