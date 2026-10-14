@@ -65,6 +65,7 @@ describe("Reef worker outbound composition", () => {
 
   function recordDispatches() {
     const commands: unknown[] = [];
+    // oxlint-disable-next-line typescript/unbound-method -- The spy forwards with call(this) to preserve each worker receiver.
     const postMessage = Worker.prototype.postMessage;
     vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
       this: Worker,
