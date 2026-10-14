@@ -772,7 +772,7 @@ export async function withPriorCiObservation(repo, pr, { prepare, finish }) {
   );
   requireEvidence(sameIdentity, "PR identity, head, or lifecycle changed while reading evidence");
   requireEvidence(samePolicy, "branch policy changed while reading evidence");
-  // Final writer authority runs after the final main read; no later API work is hidden here.
+  // Review, security, and final writer authority follow the final main read.
   const value = await finish(prepared, { ...shared, main: finalMain });
   return {
     observation: observationResult(

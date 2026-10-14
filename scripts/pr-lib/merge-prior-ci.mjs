@@ -474,7 +474,7 @@ function qualifyPreExistingFailure(evidence, run, jobs, cancelledRoots) {
   return { failures, ...cancellationProof };
 }
 
-async function verifyPreExistingFailure(
+async function preparePreExistingFailure(
   evidence,
   run,
   jobs,
@@ -525,33 +525,35 @@ async function verifyPreExistingFailure(
     (check) => check.name === "openclaw/ci-gate" && positiveInteger(check.statusId),
   );
   requireEvidence(combined.length === 1, "current combined CI/security status is required");
-  const securityReview = await verifyPriorCiSecurity({
-    repository: evidence.repository,
-    repositoryId,
-    pr: evidence.pr,
-    head: evidence.head,
-    main,
-    statusId: combined[0].statusId,
-  });
-  requireEvidence(
-    checks.every(
-      (check) =>
-        check.bucket === "pass" ||
-        check === current[0] ||
-        (check === combined[0] && check.statusId === securityReview.combinedStatusId),
-    ),
-    "pre-existing CI authority does not waive other required checks, including security",
-  );
-  return {
-    ...fixed,
-    failures: fixed.failures.map((failure) =>
-      Object.assign({}, failure, {
-        deadline: cancelledRoots.get(failure.jobId)?.deadline,
-        failedStep: cancelledRoots.get(failure.jobId)?.failedStep,
-      }),
-    ),
-    gateCheckRunId: current[0].checkRunId,
-    securityReview,
+  return async (qualifiedMain) => {
+    const securityReview = await verifyPriorCiSecurity({
+      repository: evidence.repository,
+      repositoryId,
+      pr: evidence.pr,
+      head: evidence.head,
+      main: qualifiedMain,
+      statusId: combined[0].statusId,
+    });
+    requireEvidence(
+      checks.every(
+        (check) =>
+          check.bucket === "pass" ||
+          check === current[0] ||
+          (check === combined[0] && check.statusId === securityReview.combinedStatusId),
+      ),
+      "pre-existing CI authority does not waive other required checks, including security",
+    );
+    return {
+      ...fixed,
+      failures: fixed.failures.map((failure) =>
+        Object.assign({}, failure, {
+          deadline: cancelledRoots.get(failure.jobId)?.deadline,
+          failedStep: cancelledRoots.get(failure.jobId)?.failedStep,
+        }),
+      ),
+      gateCheckRunId: current[0].checkRunId,
+      securityReview,
+    };
   };
 }
 
@@ -762,30 +764,31 @@ async function verifyPriorCiAdmin({
   const query =
     "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviewDecision reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}";
   const authorityRead = readWriterAuthority(repository, actor, evidence, policy, writerRead);
-  const reviewRead = execPrGhAsync(
-    [
-      "api",
-      "graphql",
-      "--hostname",
-      repo.host,
-      "--include",
-      "-H",
-      "Cache-Control: max-age=0",
-      "-f",
-      `owner=${repository.split("/")[0]}`,
-      "-f",
-      `name=${repository.split("/")[1]}`,
-      "-F",
-      `number=${pr}`,
-      "-f",
-      `query=${query}`,
-    ],
-    { encoding: "utf8" },
-    "plain",
-  );
+  const readReview = () =>
+    execPrGhAsync(
+      [
+        "api",
+        "graphql",
+        "--hostname",
+        repo.host,
+        "--include",
+        "-H",
+        "Cache-Control: max-age=0",
+        "-f",
+        `owner=${repository.split("/")[0]}`,
+        "-f",
+        `name=${repository.split("/")[1]}`,
+        "-F",
+        `number=${pr}`,
+        "-f",
+        `query=${query}`,
+      ],
+      { encoding: "utf8" },
+      "plain",
+    );
   const [writer, reviewRaw, run, latest, pages] = await readAll([
     authorityRead,
-    reviewRead,
+    deferFinalAuthority ? null : readReview(),
     read(`repos/${repository}/actions/runs/${evidence.runId}/attempts/${evidence.runAttempt}`),
     preExisting(evidence) ? read(`repos/${repository}/actions/runs/${evidence.runId}`) : null,
     immutable.jobs
@@ -802,22 +805,28 @@ async function verifyPriorCiAdmin({
       "qualified snapshot changed the repository identity",
     );
   }
-  const reviewResponse = parseGithubResponse(reviewRaw);
-  const review = reviewResponse.body?.data?.repository?.pullRequest;
-  requireEvidence(
-    reviewResponse.status === "200" &&
-      !reviewResponse.body.errors &&
-      review?.headRefOid === head &&
-      (review.reviewDecision === "APPROVED" || (!requireReviews && review.reviewDecision === null)),
-    "current enforced reviews must be satisfied; admin CI authority does not waive reviews",
-  );
-  if (requireThreads) {
+  const verifyReview = (raw) => {
+    const reviewResponse = parseGithubResponse(raw);
+    const review = reviewResponse.body?.data?.repository?.pullRequest;
     requireEvidence(
-      review.reviewThreads?.pageInfo?.hasNextPage === false &&
-        Array.isArray(review.reviewThreads.nodes) &&
-        review.reviewThreads.nodes.every((thread) => thread.isResolved === true),
-      "required review threads must all be resolved (more than 100 threads require ordinary landing)",
+      reviewResponse.status === "200" &&
+        !reviewResponse.body.errors &&
+        review?.headRefOid === head &&
+        (review.reviewDecision === "APPROVED" ||
+          (!requireReviews && review.reviewDecision === null)),
+      "current enforced reviews must be satisfied; admin CI authority does not waive reviews",
     );
+    if (requireThreads) {
+      requireEvidence(
+        review.reviewThreads?.pageInfo?.hasNextPage === false &&
+          Array.isArray(review.reviewThreads.nodes) &&
+          review.reviewThreads.nodes.every((thread) => thread.isResolved === true),
+        "required review threads must all be resolved (more than 100 threads require ordinary landing)",
+      );
+    }
+  };
+  if (!deferFinalAuthority) {
+    verifyReview(reviewRaw);
   }
   const runHead = preExisting(evidence) ? head : evidence.priorHead;
   let samePullRequest =
@@ -919,8 +928,8 @@ async function verifyPriorCiAdmin({
     (await readRequiredMergeChecksAsync(repo, head, policy, {
       includeCheckIdentity: preExisting(evidence),
     }));
-  const failureProof = preExisting(evidence)
-    ? await verifyPreExistingFailure(
+  const finishFailureProof = preExisting(evidence)
+    ? await preparePreExistingFailure(
         evidence,
         run,
         jobs,
@@ -931,6 +940,8 @@ async function verifyPriorCiAdmin({
         Boolean(sharedSnapshot),
       )
     : undefined;
+  const failureProof =
+    !deferFinalAuthority && finishFailureProof ? await finishFailureProof(observedMain) : undefined;
   if (!preExisting(evidence)) {
     requireEvidence(
       Array.isArray(checks) &&
@@ -943,8 +954,17 @@ async function verifyPriorCiAdmin({
       "only pending/skipped normal CI may be waived; failed CI and other checks, including security, remain blocking",
     );
   }
-  const complete = async (observedPolicy) => {
+  const complete = async (observedPolicy, qualifiedMain = observedMain) => {
     const finalPolicy = observedPolicy ?? (await readMergePolicyAsync(repo));
+    // Historical proof precedes the final observation; mutable reviews and
+    // security follow it, with writer authority last and no duplicate inventory.
+    const [finalReview, finalFailureProof] = await readAll([
+      deferFinalAuthority ? readReview() : null,
+      deferFinalAuthority && finishFailureProof ? finishFailureProof(qualifiedMain) : failureProof,
+    ]);
+    if (deferFinalAuthority) {
+      verifyReview(finalReview);
+    }
     // The snapshot owner invokes this after its final main observation. Grants
     // remain fresh even when all of the historical proof was reused.
     const current = await readWriterAuthority(repository, actor, evidence, finalPolicy, writerRead);
@@ -958,7 +978,7 @@ async function verifyPriorCiAdmin({
     );
     return {
       ...evidence,
-      ...failureProof,
+      ...finalFailureProof,
       ...(preExisting(evidence) ? { runAssociation } : {}),
       delegation,
       actor,
@@ -990,7 +1010,7 @@ async function verifyMode(mode, options) {
   const result = await withPriorCiObservation(repo, options.pr, {
     prepare: (sharedSnapshot) =>
       verifyPriorCiAdmin({ ...options, immutable, sharedSnapshot, deferFinalAuthority: true }),
-    finish: (prepared, snapshot) => prepared.complete(snapshot.policy),
+    finish: (prepared, snapshot) => prepared.complete(snapshot.policy, snapshot.main),
   });
   return {
     proof: result.value,

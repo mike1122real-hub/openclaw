@@ -154,7 +154,7 @@ describePosix("prior-CI whole REST observation fallback", () => {
 
     expect(result.status, result.output).toBe(1);
     expect(result.output).toContain("prior dispatch unresolved");
-    expect(f.state().settlementSleeps).toEqual([2]);
+    expect(f.state().settlementSleeps).toEqual([2, 2]);
     expect(f.state().mainAdvances).toHaveLength(1);
     expect(result.output).toContain("Admin authority round 3:");
     expect(f.state()).toMatchObject({
@@ -214,9 +214,7 @@ describePosix("prior-CI whole REST observation fallback", () => {
     });
     const result = f.adminPriorCi(f.path);
     expect(result.status, result.output).toBe(1);
-    expect(result.output).toContain(
-      "merged PR receipt became unavailable during active prior-CI admission",
-    );
+    expect(result.output).toContain("merged PR commit requires GraphQL observation");
     expect(f.state().observationReads).toBe(1);
     expectNoDispatch(f);
   });
@@ -288,7 +286,19 @@ describePosix("prior-CI whole REST observation fallback", () => {
     } else {
       expect(final.restObservationAppliedAt).toBe(8);
       expect(final.restMainReads).toBe(final.restObservationAppliedAt);
-      expectFinalAuthority(final.calls);
+      if (fault === "admin") {
+        expectFinalAuthority(final.calls);
+      } else {
+        const finalMainRead = final.calls.findLastIndex((call) =>
+          call.includes("repos/fixture/repo/git/ref/heads/main"),
+        );
+        const revokedAuthorityRead = final.calls.findLastIndex((call) =>
+          fault === "review"
+            ? call.some((arg) => arg.includes("headRefOid reviewDecision"))
+            : call.some((arg) => arg.startsWith(`repos/fixture/repo/commits/${f.head}/statuses?`)),
+        );
+        expect(revokedAuthorityRead).toBeGreaterThan(finalMainRead);
+      }
     }
     expectNoDispatch(f);
   });
@@ -407,8 +417,11 @@ describePosix("prior-CI whole REST observation fallback", () => {
       expect(f.state().priorCi.adminRevokedDuringMainFetch).toBe(
         boundary === "end" || boundary === "recalculated remote-only main",
       );
-      if (boundary === "start" || boundary === "end") {
+      if (boundary === "start") {
         expect(f.state().restMainReads).toBe(8);
+      } else if (boundary === "end") {
+        expect(f.state().restObservationAppliedAt).toBe(7);
+        expect(f.state().restMainReads).toBeGreaterThan(f.state().restObservationAppliedAt);
       }
       expectNoDispatch(f);
     },
@@ -483,10 +496,10 @@ describePosix("prior-CI whole REST observation fallback", () => {
     ["malformed projection", "invalid PR identity or lifecycle evidence"],
     ["renewed auto", "open PR already has an auto-merge request"],
     ["queue policy", "unsupported effective branch rule"],
-    ["changed policy", "evidence or authority changed during admission"],
+    ["changed policy", "branch policy changed while reading evidence"],
     ["CI attempt", "newer or running CI attempt"],
     ["GraphQL conflict", "no conflicts"],
-    ["final head", "PR or main changed during observation"],
+    ["final head", "qualified snapshot changed the prepared head"],
     ["final unknown", "PR or main changed during observation"],
   ] as const)("refuses %s rather than combining incompatible observations", (fault, diagnostic) => {
     const f = unknownGraphqlCandidate();

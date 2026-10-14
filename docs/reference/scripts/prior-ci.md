@@ -91,9 +91,11 @@ Completed historical attempt job data, tested-merge and source
 object equality, the prepared-head delta, and operator evidence may be reused
 only within the uninterrupted, lock-owning invocation and their pinned identities.
 
-After the final main read and writer check, local-only verification proves main's
-ancestry and merge tree, checks overlap and critical-path drift, and compares the
-Security Review publisher's protected sources against that exact tip. Missing
+Historical proof precedes the final main read. Current review and security
+authority are verified afterward, followed by the final writer check. Local-only
+verification proves main's ancestry and merge tree, checks overlap and
+critical-path drift, and compares the Security Review publisher's protected
+sources against that exact tip. Missing
 objects require discarding live authority, materializing the exact tip, and
 starting a fresh round. Approval revocation, new failing suites, changed publisher
 sources, or non-fast-forward main movement still refuse admission. The reviewed
